@@ -35,6 +35,7 @@ INSTALLED_APPS = [
 
     #apps
     'accounts',
+    'applications'
 
 ]
 
@@ -187,3 +188,6 @@ CELERY_RESULT_BACKEND = "redis://localhost:6379/0"
 AWS_ACCESS_KEY_ID = "your-access-key-id#vleyvwfewyuta%#bfkebkuf"
 AWS_SECRET_ACCESS_KEY = "your-secret-access-keyeuifbweyutabfukebfa@bkdhj"
 AWS_REGION = "us-east-1"
+
+ESKIZ_EMAIL = "email@example.com"
+ESKIZ_PASSWORD = "password" # I changed

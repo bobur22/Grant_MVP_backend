@@ -3,37 +3,58 @@ import logging
 import boto3
 from celery import shared_task
 from django.conf import settings
+from eskiz_sms import EskizSMS
 
 logger = logging.getLogger(__name__)
 
 
-
 @shared_task(bind=True, max_retries=3)
 def send_sms_task(self, phone_number, code):
-    """
-    Send SMS using AWS SNS (Amazon Simple Notification Service).
-    """
+
     try:
-        sns = boto3.client(
-            "sns",
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-            region_name=settings.AWS_REGION
-        )
+        eskiz = EskizSMS(email=settings.ESKIZ_EMAIL, password=settings.ESKIZ_PASSWORD)
 
         message = f"Your verification code is: {code}. Valid for 5 minutes."
 
-        response = sns.publish(
-            PhoneNumber=phone_number,
-            Message=message
+        response = eskiz.send_sms(
+            phone_number,
+            message=message,
+            from_whom="4546"
         )
 
-        logger.info(f"✅ SMS sent successfully to {phone_number} (MessageId: {response['MessageId']})")
-        return response["MessageId"]
+        logger.info(f"✅ SMS sent successfully to {phone_number}: {response}")
+        return response
 
     except Exception as exc:
         logger.error(f"❌ Failed to send SMS to {phone_number}: {exc}")
         raise self.retry(exc=exc, countdown=5)
+
+# @shared_task(bind=True, max_retries=3)
+# def send_sms_task(self, phone_number, code):
+#     """
+#     Send SMS using AWS SNS (Amazon Simple Notification Service).
+#     """
+#     try:
+#         sns = boto3.client(
+#             "sns",
+#             aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+#             aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+#             region_name=settings.AWS_REGION
+#         )
+#
+#         message = f"Your verification code is: {code}. Valid for 5 minutes."
+#
+#         response = sns.publish(
+#             PhoneNumber=phone_number,
+#             Message=message
+#         )
+#
+#         logger.info(f"✅ SMS sent successfully to {phone_number} (MessageId: {response['MessageId']})")
+#         return response["MessageId"]
+#
+#     except Exception as exc:
+#         logger.error(f"❌ Failed to send SMS to {phone_number}: {exc}")
+#         raise self.retry(exc=exc, countdown=5)
 
 
 """

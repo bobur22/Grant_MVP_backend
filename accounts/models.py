@@ -9,13 +9,18 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 
 class CustomUserManager(BaseUserManager):
-    def create_user(self, email, password=None, **extra_fields):
+    def create_user(self, email,phone_number, password=None, **extra_fields):
         if not email:
             raise ValueError('User should have an email address')
-        email = self.normalize_email(email)
+        if not phone_number:
+            raise ValueError('User should have an phone number')
+        email = self.normalize_email(email).lower()
         user = self.model(email=email, **extra_fields)
-        user.set_password(password)
-        user.save()
+        if password:
+            user.set_password(password)
+        else:
+            user.set_unusable_password()
+        user.save(using=self._db)
         return user
 
     def create_superuser(self, email, password=None, **extra_fields):
@@ -25,8 +30,13 @@ class CustomUserManager(BaseUserManager):
 
 
 class CustomUser(AbstractBaseUser, PermissionsMixin):
+    class Gender(models.TextChoices):
+        MALE = 'M'
+        FEMALE = 'F'
+
     first_name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
+    other_name = models.CharField(max_length=50)
     email = models.EmailField(unique=True)
     address = models.TextField(validators=[MaxLengthValidator(2000)], blank=True, null=True)
     birth_date = models.DateField(null=True, blank=True)
@@ -37,6 +47,12 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     is_staff = models.BooleanField(default=False)
     is_superuser = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
+    gender = models.CharField(max_length=10, choices=Gender.choices)
+    passport_number = models.CharField(max_length=9, blank=True, null=True)
+    pinfl = models.CharField(max_length=10, blank=True, null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = []
@@ -49,11 +65,6 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return f'{self.first_name} {self.last_name}'
-
-    def check_email(self):
-        if self.email:
-            normalize_email = self.email.lower()
-            self.email = normalize_email
 
     def has_perm(self, perm, obj=None):
         return self.is_superuser

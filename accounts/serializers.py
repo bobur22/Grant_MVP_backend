@@ -33,8 +33,8 @@ class SignupInitialSerializer(serializers.Serializer):
         return value
 
     def validate_phone_number(self, value):
-        if not value.startswith('+'):
-            raise serializers.ValidationError("Phone number must include country code with +")
+        # if not value.startswith('+'):
+        #     raise serializers.ValidationError("Phone number must include country code with +")
 
         if CustomUser.objects.filter(phone_number=value).exists():
             raise serializers.ValidationError("User with this phone number already exists.")
@@ -113,7 +113,7 @@ class SignupVerifySerializer(serializers.Serializer):
         """
         # Remove password_confirm from user_data
         password = user_data.pop('password')
-        user_data.pop('password_confirm', None)  # Remove if exists
+        user_data.pop('password_confirm', None)
 
         # Double-check email and phone are still available (race condition protection)
         if CustomUser.objects.filter(email=user_data['email']).exists():
