@@ -15,7 +15,7 @@ SECRET_KEY = 'django-insecure-46bhd(k+o2552zeufwjt=9vwp4y38^d6!k4xj2r=bl_w*vnw%^
 DEBUG = True
 
 ALLOWED_HOSTS = ['*']
-
+CORS_ALLOW_CREDENTIALS = True
 
 # Application definition
 
@@ -40,6 +40,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -188,6 +189,11 @@ CELERY_RESULT_BACKEND = "redis://localhost:6379/0"
 AWS_ACCESS_KEY_ID = "your-access-key-id#vleyvwfewyuta%#bfkebkuf"
 AWS_SECRET_ACCESS_KEY = "your-secret-access-keyeuifbweyutabfukebfa@bkdhj"
 AWS_REGION = "us-east-1"
+
+CORS_ALLOW_ALL_ORIGINS = True
+
+CSRF_TRUSTED_ORIGINS = ['http://localhost:8000', 'https://grand-production.up.railway.app/',]
+
 
 ESKIZ_EMAIL = "email@example.com"
 ESKIZ_PASSWORD = "password" # I changed
