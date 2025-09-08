@@ -3,6 +3,7 @@ import os
 import uuid
 
 from django.core.files.storage import default_storage
+from django.core.paginator import Paginator
 from django_filters import OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import status, generics, viewsets
@@ -674,106 +675,6 @@ class ApplicationFinalReviewView(MultiStepApplicationMixin, APIView):
             'errors': serializer.errors
         }, status=status.HTTP_400_BAD_REQUEST)
 
-# class ApplicationFinalReviewView(MultiStepApplicationMixin, APIView):
-#     """
-#     Step 4: Final Review and Submit
-#     GET: Show all collected data for review
-#     POST: Submit final application
-#     """
-#     permission_classes = [IsAuthenticated]
-#
-#     def get(self, request):
-#         """Get complete application data for final review"""
-#         session_data = self.get_session_data(request)
-#
-#         # Check if all steps are completed
-#         required_steps = ['step1_data', 'step2_data', 'step3_data']
-#         missing_steps = [step for step in required_steps if step not in session_data]
-#
-#         if missing_steps:
-#             return Response({
-#                 'success': False,
-#                 'message': 'Barcha qadamlar yakunlanmagan',
-#                 'missing_steps': missing_steps
-#             }, status=status.HTTP_400_BAD_REQUEST)
-#
-#         # Combine all data
-#         complete_data = {}
-#         complete_data.update(session_data.get('step1_data', {}))
-#         complete_data.update(session_data.get('step2_data', {}))
-#         complete_data.update(session_data.get('step3_data', {}))
-#         complete_data['reward_id'] = session_data.get('reward_id')
-#
-#         # Get reward information
-#         try:
-#             reward = Reward.objects.get(id=complete_data['reward_id'])
-#             complete_data['reward_name'] = reward.name
-#         except Reward.DoesNotExist:
-#             pass
-#
-#         return Response({
-#             'success': True,
-#             'data': complete_data,
-#             'current_step': 4
-#         })
-#
-#     def post(self, request):
-#         """Submit final application"""
-#         session_data = self.get_session_data(request)
-#
-#         # Check if all steps are completed
-#         required_steps = ['step1_data', 'step2_data', 'step3_data']
-#         for step in required_steps:
-#             if step not in session_data:
-#                 return Response({
-#                     'success': False,
-#                     'message': f'{step} yakunlanmagan'
-#                 }, status=status.HTTP_400_BAD_REQUEST)
-#
-#         # Combine all data
-#         final_data = {}
-#         final_data.update(session_data.get('step1_data', {}))
-#         final_data.update(session_data.get('step2_data', {}))
-#         final_data.update(session_data.get('step3_data', {}))
-#         final_data['reward_id'] = session_data.get('reward_id')
-#         final_data['source'] = 'web'
-#
-#         # Create final application
-#         serializer = ApplicationFinalSerializer(
-#             data=final_data,
-#             context={'request': request}
-#         )
-#
-#         if serializer.is_valid():
-#             try:
-#                 application = serializer.create(serializer.validated_data)
-#
-#                 # Clear session data after successful submission
-#                 cache.delete(self.get_session_key(request))
-#                 if 'application_reward_id' in request.session:
-#                     del request.session['application_reward_id']
-#
-#                 # Return created application data
-#                 response_serializer = ApplicationDetailSerializer(application)
-#
-#                 return Response({
-#                     'success': True,
-#                     'message': 'Ariza muvaffaqiyatli yuborildi',
-#                     'application': response_serializer.data
-#                 }, status=status.HTTP_201_CREATED)
-#
-#             except Exception as e:
-#                 return Response({
-#                     'success': False,
-#                     'message': f'Ariza saqlashda xatolik: {str(e)}'
-#                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-#
-#         return Response({
-#             'success': False,
-#             'errors': serializer.errors
-#         }, status=status.HTTP_400_BAD_REQUEST)
-
-
 class ApplicationStatusView(MultiStepApplicationMixin, APIView):
     """Get current application progress status"""
     permission_classes = [IsAuthenticated]
@@ -863,3 +764,239 @@ def clear_draft(request):
         'success': True,
         'message': 'Ariza loyihasi tozalandi'
     })
+
+
+class ApplicationsListView(APIView):
+    """
+    Get applications list with role-based access:
+    - Admin/Staff: See all applications
+    - Regular users: See only their applications
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """Get applications list based on user role"""
+
+        # Get query parameters
+        page = int(request.query_params.get('page', 1))
+        page_size = int(request.query_params.get('page_size', 10))
+        status_filter = request.query_params.get('status')  # Filter by status
+        reward_id = request.query_params.get('reward_id')  # Filter by reward
+        search = request.query_params.get('search')  # Search by user name or PINFL
+
+        # Base queryset
+        if request.user.is_staff or request.user.is_superuser:
+            # Admin/Staff can see all applications
+            queryset = Application.objects.all()
+        else:
+            # Regular users see only their applications
+            queryset = Application.objects.filter(user=request.user)
+
+        # Apply filters
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+
+        if reward_id:
+            queryset = queryset.filter(reward_id=reward_id)
+
+        if search:
+            queryset = queryset.filter(
+                Q(user__first_name__icontains=search) |
+                Q(user__last_name__icontains=search) |
+                Q(user__pinfl__icontains=search) |
+                Q(reward__name__icontains=search)
+            )
+
+        # Order by creation date (newest first)
+        queryset = queryset.select_related('user', 'reward').order_by('-created_at')
+
+        # Pagination
+        paginator = Paginator(queryset, page_size)
+        page_obj = paginator.get_page(page)
+
+        # Serialize data
+        applications_data = []
+        for app in page_obj:
+            applications_data.append({
+                'ariza_raqami': app.id,  # Application ID
+                'xizmat_nomi': app.reward.name,  # Reward name
+                'yuborilgan_kuni': app.created_at.strftime('%d.%m.%Y'),  # Created date
+                'holati': app.get_status_display(),  # Status display
+                'holati_code': app.status,  # Status code for frontend logic
+                'manba': app.get_source_display() if hasattr(app, 'get_source_display') else app.source,  # Source
+
+                # Additional info (especially useful for admins)
+                'foydalanuvchi': f"{app.user.first_name} {app.user.last_name}" if request.user.is_staff else None,
+                'pinfl': app.user.pinfl if request.user.is_staff else None,
+                'telefon': app.user.phone_number if request.user.is_staff else None,
+                'hudud': app.get_area_display() if request.user.is_staff else None,
+
+                # File counts
+                'tavsiya_xati': 'Mavjud' if app.recommendation_letter else 'Mavjud emas',
+                'sertifikatlar_soni': app.certificates_set.count() if hasattr(app, 'certificates_set') else 0,
+
+                # Timestamps
+                'yaratilgan_vaqt': app.created_at.strftime('%d.%m.%Y %H:%M'),
+                'yangilangan_vaqt': app.updated_at.strftime('%d.%m.%Y %H:%M') if hasattr(app, 'updated_at') else None,
+            })
+
+        return Response({
+            'success': True,
+            'data': applications_data,
+            'pagination': {
+                'current_page': page,
+                'total_pages': paginator.num_pages,
+                'total_count': paginator.count,
+                'has_next': page_obj.has_next(),
+                'has_previous': page_obj.has_previous(),
+                'page_size': page_size
+            },
+            'filters': {
+                'status': status_filter,
+                'reward_id': reward_id,
+                'search': search
+            },
+            'user_role': 'admin' if request.user.is_staff else 'user'
+        })
+
+
+class ApplicationDetailView(APIView):
+    """
+    Get detailed information about a specific application
+    - Admin/Staff: Can see any application
+    - Regular users: Can see only their own applications
+    """
+    permission_classes = [IsAuthenticated]
+
+
+    def get(self, request, application_id):
+        """Get detailed application information"""
+
+        try:
+            if request.user.is_staff or request.user.is_superuser:
+                # Admin can see any application
+                application = Application.objects.select_related('user', 'reward').get(id=application_id)
+            else:
+                # Regular users can only see their own applications
+                application = Application.objects.select_related('user', 'reward').get(
+                    id=application_id,
+                    user=request.user
+                )
+        except Application.DoesNotExist:
+            return Response({
+                'success': False,
+                'message': 'Ariza topilmadi yoki sizga ruxsat berilmagan'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # Get certificates
+        certificates = []
+        if hasattr(application, 'certificates_set'):
+            for cert in application.certificates_set.all():
+                certificates.append({
+                    'id': cert.id,
+                    'fayl_nomi': cert.get_filename() if hasattr(cert, 'get_filename') else cert.file.name.split('/')[
+                        -1],
+                    'fayl_url': cert.file.url if cert.file else None,
+                    'yuklangan_vaqt': cert.created_at.strftime('%d.%m.%Y %H:%M') if hasattr(cert,
+                                                                                            'created_at') else None
+                })
+
+        # Prepare detailed response
+        detail_data = {
+            'ariza_raqami': application.id,
+            'xizmat_nomi': application.reward.name,
+            'holati': application.get_status_display(),
+            'holati_code': application.status,
+            'manba': application.get_source_display() if hasattr(application,
+                                                                 'get_source_display') else application.source,
+
+            # Personal information
+            'shaxsiy_malumotlar': {
+                'ism': application.user.first_name,
+                'familiya': application.user.last_name,
+                'pinfl': application.user.pinfl,
+                'telefon': application.user.phone_number,
+                'hudud': application.get_area_display(),
+                'tuman': application.district,
+                'mahalla': application.neighborhood,
+            },
+
+            # Activity information
+            'faoliyat_malumotlari': {
+                'faoliyat_sohasi': application.activity,
+                'faoliyat_haqida': application.activity_description,
+            },
+
+            # Documents
+            'hujjatlar': {
+                'tavsiya_xati': {
+                    'mavjud': bool(application.recommendation_letter),
+                    'fayl_url': application.recommendation_letter.url if application.recommendation_letter else None,
+                    'fayl_nomi': application.recommendation_letter.name.split('/')[
+                        -1] if application.recommendation_letter else None
+                },
+                'sertifikatlar': certificates
+            },
+
+            # Timestamps
+            'vaqtlar': {
+                'yuborilgan': application.created_at.strftime('%d.%m.%Y %H:%M'),
+                'yangilangan': application.updated_at.strftime('%d.%m.%Y %H:%M') if hasattr(application,
+                                                                                            'updated_at') else None
+            }
+        }
+
+        return Response({
+            'success': True,
+            'data': detail_data
+        })
+
+
+class ApplicationStatsView(APIView):
+    """
+    Get application statistics (for admin dashboard)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """Get application statistics"""
+
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({
+                'success': False,
+                'message': 'Bu ma\'lumotlarga faqat administratorlar kirishi mumkin'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        # Get statistics
+        from django.db.models import Count
+
+        total_applications = Application.objects.count()
+
+        # Status breakdown
+        status_stats = Application.objects.values('status').annotate(count=Count('status'))
+        status_breakdown = {stat['status']: stat['count'] for stat in status_stats}
+
+        # Source breakdown
+        source_stats = Application.objects.values('source').annotate(count=Count('source'))
+        source_breakdown = {stat['source']: stat['count'] for stat in source_stats}
+
+        # Recent applications (last 7 days)
+        from datetime import datetime, timedelta
+        recent_date = datetime.now() - timedelta(days=7)
+        recent_applications = Application.objects.filter(created_at__gte=recent_date).count()
+
+        # Top rewards by application count
+        reward_stats = Application.objects.values('reward__name').annotate(
+            count=Count('reward')
+        ).order_by('-count')[:5]
+
+        return Response({
+            'success': True,
+            'stats': {
+                'umumiy_arizalar': total_applications,
+                'holat_boyicha': status_breakdown,
+                'manba_boyicha': source_breakdown,
+                'oxirgi_7_kun': recent_applications,
+                'eng_kop_arizalar': list(reward_stats)
+            }
+        })

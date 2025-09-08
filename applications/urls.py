@@ -3,6 +3,8 @@ from django.urls import path, include
 from . import views
 from rest_framework.routers import DefaultRouter
 
+from .views import ApplicationStatsView, ApplicationDetailView
+
 router = DefaultRouter()
 router.register(r'rewards', views.RewardViewSet, basename='reward')
 
@@ -15,6 +17,9 @@ urlpatterns = [
     path('application/step3/', views.ApplicationStep3View.as_view(), name='application-step3'),
     path('application/final-review/', views.ApplicationFinalReviewView.as_view(), name='application-final'),
     path('application/status/', views.ApplicationStatusView.as_view(), name='application-status'),
+    path('applications/list/', views.ApplicationsListView.as_view(), name='application-list'),
+    path('applications/stats/', ApplicationStatsView.as_view(), name='application-stats'),
+    path('applications/<int:application_id>/', ApplicationDetailView.as_view(), name='application-detail'),
 
     # File upload
     path('certificate/upload/', views.CertificateUploadView.as_view(), name='certificate-upload'),
