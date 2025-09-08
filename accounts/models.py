@@ -43,7 +43,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     other_name = models.CharField(max_length=50)
     email = models.EmailField(unique=True)
     address = models.TextField(validators=[MaxLengthValidator(2000)],)
-    birth_date = models.DateField()
+    birth_date = models.DateField(null=True, blank=True)
     phone_number = models.CharField(max_length=20, unique=True)
     profile_picture = models.ImageField(upload_to='avatars/', blank=True, validators=[
         FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'heic', 'webp', ])],
@@ -60,7 +60,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     updated_at = models.DateTimeField(auto_now=True)
 
     USERNAME_FIELD = 'phone_number'
-    REQUIRED_FIELDS = []
+    REQUIRED_FIELDS = ['email']
     objects = CustomUserManager()
 
     class Meta:

@@ -208,7 +208,8 @@ class ApplicationViewSet(viewsets.ModelViewSet):
                 existing_application = Application.objects.filter(
                     user=request.user,
                     reward=serializer.validated_data['reward'],
-                    status__in=['pending', 'in_progress']
+                    # status__in=['pending', 'in_progress']
+                    status__in=['yuborilgan']
                 ).exists()
 
                 if existing_application:
@@ -333,41 +334,41 @@ class ApplicationViewSet(viewsets.ModelViewSet):
                 'message': 'Error retrieving your applications',
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
-    def statistics(self, request):
-        """Get application statistics (Staff/Admin only)"""
-        if not (request.user.is_staff or request.user.is_superuser):
-            return Response({
-                'success': False,
-                'message': 'You do not have permission to view statistics'
-            }, status=status.HTTP_403_FORBIDDEN)
-
-        try:
-            total = Application.objects.count()
-            pending = Application.objects.filter(status='pending').count()
-            in_progress = Application.objects.filter(status='in_progress').count()
-            accepted = Application.objects.filter(status='accepted').count()
-            rejected = Application.objects.filter(status='rejected').count()
-
-            stats = {
-                'total': total,
-                'pending': pending,
-                'in_progress': in_progress,
-                'accepted': accepted,
-                'rejected': rejected,
-                'completion_rate': round((accepted / total * 100), 2) if total > 0 else 0
-            }
-
-            return Response({
-                'success': True,
-                'message': 'Statistics retrieved successfully',
-                'data': stats
-            }, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            return Response({
-                'success': False,
-                'message': 'Error retrieving statistics',
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    #
+    # @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    # def statistics(self, request):
+    #     """Get application statistics (Staff/Admin only)"""
+    #     if not (request.user.is_staff or request.user.is_superuser):
+    #         return Response({
+    #             'success': False,
+    #             'message': 'You do not have permission to view statistics'
+    #         }, status=status.HTTP_403_FORBIDDEN)
+    #
+    #     try:
+    #         total = Application.objects.count()
+    #         pending = Application.objects.filter(status='pending').count()
+    #         in_progress = Application.objects.filter(status='in_progress').count()
+    #         accepted = Application.objects.filter(status='accepted').count()
+    #         rejected = Application.objects.filter(status='rejected').count()
+    #
+    #         stats = {
+    #             'total': total,
+    #             'pending': pending,
+    #             'in_progress': in_progress,
+    #             'accepted': accepted,
+    #             'rejected': rejected,
+    #             'completion_rate': round((accepted / total * 100), 2) if total > 0 else 0
+    #         }
+    #
+    #         return Response({
+    #             'success': True,
+    #             'message': 'Statistics retrieved successfully',
+    #             'data': stats
+    #         }, status=status.HTTP_200_OK)
+    #
+    #     except Exception as e:
+    #         return Response({
+    #             'success': False,
+    #             'message': 'Error retrieving statistics',
+    #             'error': str(e)
+    #         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

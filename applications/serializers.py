@@ -152,7 +152,8 @@ class ApplicationStatusUpdateSerializer(serializers.ModelSerializer):
 
     def validate_status(self, value):
         """Validate status transition"""
-        valid_statuses = ['pending', 'in_progress', 'accepted', 'rejected']
+        # valid_statuses = ['yuborilgan', 'in_progress', 'accepted', 'rejected']
+        valid_statuses = ['yuborilgan']
         if value not in valid_statuses:
             raise serializers.ValidationError(f"Invalid status. Must be one of: {valid_statuses}")
         return value
