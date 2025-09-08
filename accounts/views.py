@@ -3,6 +3,7 @@ import string
 from datetime import timedelta
 
 from django.core.cache import cache
+from django.db import IntegrityError
 from django.utils import timezone
 from rest_framework import permissions, serializers, status
 from rest_framework.permissions import AllowAny
@@ -29,9 +30,8 @@ class SignupStep1View(APIView):
             try:
                 result = serializer.save()
 
-                # Store ALL user data in cache - this is the key fix!
                 cache_key = f"signup_data_{result['verification_id']}"
-                cache.set(cache_key, result['user_data'], timeout=300)  # 5 minutes
+                cache.set(cache_key, result['user_data'], timeout=300)
 
                 return Response({
                     'success': True,
@@ -60,7 +60,6 @@ class SignupStep2View(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        # User only sends verification_id and code
         serializer = SignupVerifySerializer(data=request.data)
 
         if serializer.is_valid():
@@ -68,9 +67,11 @@ class SignupStep2View(APIView):
                 verification_id = serializer.validated_data['verification_id']
                 verification = serializer.validated_data['verification']
 
+
                 # Get the cached user data
                 cache_key = f"signup_data_{verification_id}"
                 cached_user_data = cache.get(cache_key)
+
 
                 if not cached_user_data:
                     return Response({
@@ -99,6 +100,20 @@ class SignupStep2View(APIView):
                     'success': False,
                     'message': str(e)
                 }, status=status.HTTP_400_BAD_REQUEST)
+
+            except IntegrityError as e:
+                if 'phone_number' in str(e).lower():
+                    message = "This phone number is already registered."
+                elif 'email' in str(e).lower():
+                    message = "This email address is already registered."
+                else:
+                    message = "A user with this information already exists."
+
+                return Response({
+                    'success': False,
+                    'message': message
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             except Exception as e:
                 return Response({
                     'success': False,
@@ -173,7 +188,6 @@ class SigninView(TokenObtainPairView):
     Regular signin for existing users
     """
     serializer_class = SigninSerializer
-
 
 
 class SendPasswordResetCodeView(APIView):

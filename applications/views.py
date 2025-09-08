@@ -26,11 +26,15 @@ class RewardViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ['created_at', 'name']
     ordering = ['-created_at']
 
+
+
     def list(self, request, *args, **kwargs):
         """List all available rewards"""
         try:
             queryset = self.filter_queryset(self.get_queryset())
             page = self.paginate_queryset(queryset)
+            if getattr(self, 'swagger_fake_view', False):
+                return queryset.none()
 
             if page is not None:
                 serializer = self.get_serializer(page, many=True)
@@ -111,6 +115,8 @@ class FileViewSet(viewsets.ModelViewSet):
         try:
             queryset = self.get_queryset()
             serializer = self.get_serializer(queryset, many=True)
+            if getattr(self, 'swagger_fake_view', False):
+                return queryset.none()
             return Response({
                 'success': True,
                 'message': 'Files retrieved successfully',
@@ -156,6 +162,8 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         - Regular users: see only their own applications
         """
         queryset = super().get_queryset()
+        if getattr(self, 'swagger_fake_view', False):
+            return queryset.none()
 
         if self.request.user.is_staff or self.request.user.is_superuser:
             return queryset

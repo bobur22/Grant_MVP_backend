@@ -1,7 +1,8 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
-from accounts.models import CustomUser, PhoneVerification
+from accounts.models import CustomUser, PhoneVerification, PasswordResetCode
+
 
 class CustomUserAdmin(UserAdmin):
     model = CustomUser
@@ -41,3 +42,4 @@ class CustomUserAdmin(UserAdmin):
 
 admin.site.register(CustomUser, CustomUserAdmin)
 admin.site.register(PhoneVerification)
+admin.site.register(PasswordResetCode)

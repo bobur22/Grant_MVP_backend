@@ -1,14 +1,14 @@
 import random
 import string
-from datetime import timedelta
+
 
 from django.contrib.auth import authenticate
 from django.contrib.auth.hashers import make_password
-from django.utils import timezone
+from django.db import IntegrityError, transaction
 from rest_framework import serializers
 from rest_framework_simplejwt.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-
+import datetime
 from .models import CustomUser, PasswordResetCode, PhoneVerification
 from .tasks import send_reset_code, send_sms_task
 
@@ -20,12 +20,32 @@ class SignupInitialSerializer(serializers.Serializer):
     """
     first_name = serializers.CharField(max_length=50)
     last_name = serializers.CharField(max_length=50)
-    email = serializers.EmailField()
+    other_name = serializers.CharField(max_length=50)
+    gender = serializers.ChoiceField(choices=CustomUser.Gender.choices)
+    email = serializers.EmailField(max_length=100)
     phone_number = serializers.CharField(max_length=20)
     password = serializers.CharField(write_only=True, min_length=8)
     password_confirm = serializers.CharField(write_only=True)
-    birth_date = serializers.DateField(required=False, allow_null=True)
-    address = serializers.CharField(max_length=2000, required=False, allow_blank=True)
+    birth_date = serializers.DateField()
+    address = serializers.CharField(max_length=2000,)
+    working_place = serializers.CharField(max_length=2000, required=False, allow_blank=True)
+    pinfl = serializers.CharField(max_length=14,)
+    passport_number = serializers.CharField(max_length=9,)
+
+    class Meta:
+        unique_together = ('pinfl', 'passport_number')
+
+    def validate_birth_date(self, birth_date):
+        if not birth_date:
+            raise serializers.ValidationError("Birth date is required")
+        if birth_date >= datetime.date.today():
+            raise serializers.ValidationError("Birth date must be before today")
+
+    def validate_working_place(self, working_place):
+        if len(working_place) > 2000:
+            raise serializers.ValidationError("Working place must be less than 2000 characters")
+
+
 
     def validate_email(self, value):
         if CustomUser.objects.filter(email=value).exists():
@@ -111,47 +131,67 @@ class SignupVerifySerializer(serializers.Serializer):
         """
         Create the user account using cached data
         """
-        # Remove password_confirm from user_data
-        password = user_data.pop('password')
-        user_data.pop('password_confirm', None)
+        # Create a copy to avoid modifying the original
+        user_data_copy = user_data.copy()
 
-        # Double-check email and phone are still available (race condition protection)
-        if CustomUser.objects.filter(email=user_data['email']).exists():
-            raise serializers.ValidationError("User with this email already exists.")
+        # Extract the required parameters
+        password = user_data_copy.pop('password')
+        user_data_copy.pop('password_confirm', None)
+        email = user_data_copy.pop('email')
+        phone_number = user_data_copy.pop('phone_number')
 
-        if CustomUser.objects.filter(phone_number=user_data['phone_number']).exists():
-            raise serializers.ValidationError("User with this phone number already exists.")
+        try:
+            with transaction.atomic():
+                # Check for existing users
+                existing_phone = CustomUser.objects.filter(phone_number=phone_number).exists()
+                existing_email = CustomUser.objects.filter(email=email).exists()
 
-        # Create the user
-        user = CustomUser.objects.create_user(
-            password=password,
-            **user_data
-        )
+                if existing_email:
+                    raise serializers.ValidationError("User with this email already exists.")
 
-        # Mark verification as used and associate with user
-        verification.user = user
-        verification.is_used = True
-        verification.save()
+                if existing_phone:
+                    raise serializers.ValidationError("User with this phone number already exists.")
 
-        return user
+                # Create the user with explicit parameters
+                user = CustomUser.objects.create_user(
+                    email=email,
+                    phone_number=phone_number,
+                    password=password,
+                    **user_data_copy  # remaining fields like first_name, last_name, etc.
+                )
+
+                # Mark verification as used and associate with user
+                verification.user = user
+                verification.is_used = True
+                verification.save()
+
+                return user
+
+        except IntegrityError as e:
+            if 'phone_number' in str(e).lower():
+                raise serializers.ValidationError("This phone number is already registered.")
+            elif 'email' in str(e).lower():
+                raise serializers.ValidationError("This email address is already registered.")
+            else:
+                raise serializers.ValidationError(f"Database constraint error: {str(e)}")
 
 
 class SigninSerializer(TokenObtainPairSerializer):
     """
     Regular signin with email/password
     """
-    username_field = 'email'
+    username_field = 'phone_number'
 
     def validate(self, attrs):
-        email = attrs.get("email")
+        phone_number = attrs.get("phone_number")
         password = attrs.get("password")
 
-        if not email or not password:
-            raise AuthenticationFailed("Email and password are required")
+        if not phone_number or not password:
+            raise AuthenticationFailed("Phone number and password are required")
 
         user = authenticate(
             request=self.context.get('request'),
-            username=email,
+            username=phone_number,
             password=password
         )
 
@@ -162,17 +202,6 @@ class SigninSerializer(TokenObtainPairSerializer):
             raise AuthenticationFailed("Account is inactive")
 
         data = super().validate(attrs)
-
-        # Add custom user data to response
-        data.update({
-            'user': {
-                'id': user.id,
-                'email': user.email,
-                'first_name': user.first_name,
-                'last_name': user.last_name,
-                'phone_number': user.phone_number,
-            }
-        })
 
         return data
 

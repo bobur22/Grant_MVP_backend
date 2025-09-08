@@ -15,7 +15,7 @@ class CustomUserManager(BaseUserManager):
         if not phone_number:
             raise ValueError('User should have an phone number')
         email = self.normalize_email(email).lower()
-        user = self.model(email=email, **extra_fields)
+        user = self.model(email=email,phone_number=phone_number, **extra_fields)
         if password:
             user.set_password(password)
         else:
@@ -23,10 +23,14 @@ class CustomUserManager(BaseUserManager):
         user.save(using=self._db)
         return user
 
-    def create_superuser(self, email, password=None, **extra_fields):
+    def create_superuser(self, email,phone_number, password=None, **extra_fields):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
-        return self.create_user(email, password, **extra_fields)
+        if not email:
+            raise ValueError('User should have an email address')
+        if not phone_number:
+            raise ValueError('User should have an phone number')
+        return self.create_user(email,phone_number, password, **extra_fields)
 
 
 class CustomUser(AbstractBaseUser, PermissionsMixin):
@@ -38,8 +42,8 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     last_name = models.CharField(max_length=50)
     other_name = models.CharField(max_length=50)
     email = models.EmailField(unique=True)
-    address = models.TextField(validators=[MaxLengthValidator(2000)], blank=True, null=True)
-    birth_date = models.DateField(null=True, blank=True)
+    address = models.TextField(validators=[MaxLengthValidator(2000)],)
+    birth_date = models.DateField()
     phone_number = models.CharField(max_length=20, unique=True)
     profile_picture = models.ImageField(upload_to='avatars/', blank=True, validators=[
         FileExtensionValidator(allowed_extensions=['jpg', 'jpeg', 'png', 'heic', 'webp', ])],
@@ -48,13 +52,14 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     is_superuser = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     gender = models.CharField(max_length=10, choices=Gender.choices)
-    passport_number = models.CharField(max_length=9, blank=True, null=True)
-    pinfl = models.CharField(max_length=10, blank=True, null=True)
+    working_place = models.CharField(max_length=2000, blank=True, null=True)
+    passport_number = models.CharField(max_length=9,)
+    pinfl = models.CharField(max_length=14,)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    USERNAME_FIELD = 'email'
+    USERNAME_FIELD = 'phone_number'
     REQUIRED_FIELDS = []
     objects = CustomUserManager()
 

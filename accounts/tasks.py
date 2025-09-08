@@ -1,7 +1,9 @@
 import logging
+import random
 
 import boto3
 from celery import shared_task
+from config.celery import app
 from django.conf import settings
 from eskiz_sms import EskizSMS
 
@@ -64,9 +66,9 @@ Important
 # confirmation code
 
 """
-@shared_task(bind=True)
+@app.task
 def send_reset_code(phone_number, code):
-    pass
+    return random.randint(100000, 999999)
 
 # @shared_task(bind=True, max_retries=3)
 # def send_sms_task_twilio(self, phone_number, code):
