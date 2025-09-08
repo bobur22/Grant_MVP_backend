@@ -23,6 +23,7 @@ djangorestframework_simplejwt==5.5.1
 drf-yasg==1.21.10
 eskiz-sms==0.2.3
 frozenlist==1.7.0
+gunicorn==23.0.0
 h11==0.14.0
 httpcore==0.16.3
 httpx==0.23.3
