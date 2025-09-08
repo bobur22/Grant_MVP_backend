@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Reward, File, Application
+from .models import Reward, File, Application, Certificates
 
 CustomUser = get_user_model()
 
@@ -55,15 +55,16 @@ class RewardCreateUpdateSerializer(serializers.ModelSerializer):
         """Validate image file"""
         if value:
             # Check file size (max 5MB)
-            if value.size > 5 * 1024 * 1024:
-                raise serializers.ValidationError("Rasm hajmi 5MB dan oshmasligi kerak")
+            if value.size > 10 * 1024 * 1024:
+                raise serializers.ValidationError("Rasm hajmi 10MB dan oshmasligi kerak")
 
             # Check file type
-            allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
+            allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', ]
             if value.content_type not in allowed_types:
                 raise serializers.ValidationError("Faqat JPEG, PNG, WEBP formatdagi rasmlar qabul qilinadi")
 
         return value
+
 
 class FileSerializer(serializers.ModelSerializer):
     """Serializer for File model"""
@@ -84,15 +85,7 @@ class CustomUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
         fields = ['id', 'email', 'first_name', 'last_name', ]
-        read_only_fields = ['id','email', 'first_name', 'last_name', ]
-
-
-# serializers.py
-from rest_framework import serializers
-from django.contrib.auth import get_user_model
-from .models import Application, Reward, Certificates
-
-User = get_user_model()
+        read_only_fields = ['id', 'email', 'first_name', 'last_name', ]
 
 
 class ApplicationStep1Serializer(serializers.Serializer):
@@ -100,19 +93,18 @@ class ApplicationStep1Serializer(serializers.Serializer):
     Step 1: Personal Information (Shaxsiy ma'lumotlar)
     Fields: F.I.SH, JSHSHIR, Hudud, Tuman, Mahalla, Telefon raqam
     """
-    # These fields come from User model
     first_name = serializers.CharField(max_length=150)
     last_name = serializers.CharField(max_length=150)
-    jshshir = serializers.CharField(max_length=14, min_length=14)
+    pinfl = serializers.CharField(max_length=14, min_length=14)
     phone_number = serializers.CharField(max_length=20)
 
-    # These fields come from Application model
     area = serializers.ChoiceField(choices=Application.AREA_CHOICES)
     district = serializers.CharField(max_length=200)
     neighborhood = serializers.CharField(max_length=200)
+    reward_id = serializers.IntegerField()
 
-    def validate_jshshir(self, value):
-        """Validate JSHSHIR format"""
+    def validate_pinfl(self, value):
+        """Validate PINFL format"""
         if not value.isdigit():
             raise serializers.ValidationError("JSHSHIR faqat raqamlardan iborat bo'lishi kerak")
         return value
@@ -121,8 +113,16 @@ class ApplicationStep1Serializer(serializers.Serializer):
         """Validate phone number format"""
         # Remove any spaces or special characters
         clean_number = ''.join(filter(str.isdigit, value))
-        if len(clean_number) < 9:
+        if len(clean_number) > 15:
             raise serializers.ValidationError("Telefon raqam noto'g'ri formatda")
+        return value
+
+    def validate_reward_id(self, value):
+        """Validate reward exists"""
+        try:
+            Reward.objects.get(id=value)
+        except Reward.DoesNotExist:
+            raise serializers.ValidationError("Tanlangan mukofot mavjud emas")
         return value
 
 
@@ -136,9 +136,13 @@ class ApplicationStep2Serializer(serializers.Serializer):
 
     def validate_activity_description(self, value):
         """Validate activity description length"""
-        if len(value.strip()) < 50:
+        if not value:
             raise serializers.ValidationError(
-                "Faoliyat haqida kamida 50 ta belgi kiriting"
+                "Faoliyat haqida ma'lumot kiritilishi shart"
+            )
+        if len(value) > 200:
+            raise serializers.ValidationError(
+                "200 ta belgidan kam malumot kiritilsin"
             )
         return value.strip()
 
@@ -149,11 +153,9 @@ class CertificateUploadSerializer(serializers.Serializer):
 
     def validate_file(self, value):
         """Validate certificate file"""
-        # Check file size (max 10MB)
-        if value.size > 10 * 1024 * 1024:
-            raise serializers.ValidationError("Fayl hajmi 10MB dan oshmasligi kerak")
+        if value.size > 15 * 1024 * 1024:  # less than 15mb
+            raise serializers.ValidationError("Fayl hajmi 15MB dan oshmasligi kerak")
 
-        # Check file extension
         allowed_extensions = ['.pdf', '.jpg', '.jpeg', '.png', '.doc', '.docx']
         if not any(value.name.lower().endswith(ext) for ext in allowed_extensions):
             raise serializers.ValidationError(
@@ -178,11 +180,9 @@ class ApplicationStep3Serializer(serializers.Serializer):
     def validate_recommendation_letter(self, value):
         """Validate recommendation letter"""
         if value:
-            # Check file size (max 5MB)
-            if value.size > 5 * 1024 * 1024:
-                raise serializers.ValidationError("Tavsiya xati hajmi 5MB dan oshmasligi kerak")
+            if value.size > 10 * 1024 * 1024:
+                raise serializers.ValidationError("Tavsiya xati hajmi 10MB dan oshmasligi kerak")
 
-            # Check file extension
             allowed_extensions = ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png']
             if not any(value.name.lower().endswith(ext) for ext in allowed_extensions):
                 raise serializers.ValidationError(
@@ -199,10 +199,10 @@ class ApplicationStep3Serializer(serializers.Serializer):
 
             # Validate each certificate
             for certificate in value:
-                # Check file size (max 5MB each)
-                if certificate.size > 5 * 1024 * 1024:
+                # Check file size (max 10MB each)
+                if certificate.size > 10 * 1024 * 1024:
                     raise serializers.ValidationError(
-                        f"Sertifikat fayli '{certificate.name}' hajmi 5MB dan oshmasligi kerak"
+                        f"Sertifikat fayli '{certificate.name}' hajmi 10MB dan oshmasligi kerak"
                     )
 
                 # Check file extension
@@ -223,7 +223,7 @@ class ApplicationFinalSerializer(serializers.Serializer):
     # Step 1 data
     first_name = serializers.CharField(max_length=150)
     last_name = serializers.CharField(max_length=150)
-    jshshir = serializers.CharField(max_length=14)
+    pinfl = serializers.CharField(max_length=14)
     phone_number = serializers.CharField(max_length=20)
     area = serializers.ChoiceField(choices=Application.AREA_CHOICES)
     district = serializers.CharField(max_length=200)
@@ -233,13 +233,9 @@ class ApplicationFinalSerializer(serializers.Serializer):
     activity = serializers.CharField(max_length=200)
     activity_description = serializers.CharField()
 
-    # Step 3 data
-    recommendation_letter = serializers.FileField(required=False, allow_null=True)
-    certificates = serializers.ListField(
-        child=serializers.FileField(),
-        required=False,
-        allow_empty=True
-    )
+    # Step 3 data - NO VALIDATION, just accept whatever comes from session
+    recommendation_letter = serializers.JSONField(required=False, allow_null=True)
+    certificates = serializers.JSONField(required=False, default=list)
 
     # Additional fields
     reward_id = serializers.IntegerField()
@@ -260,14 +256,30 @@ class ApplicationFinalSerializer(serializers.Serializer):
         # Update user information
         user.first_name = validated_data['first_name']
         user.last_name = validated_data['last_name']
-        user.jshshir = validated_data['jshshir']
+        user.pinfl = validated_data['pinfl']
         user.phone_number = validated_data['phone_number']
         user.save()
 
-        # Extract certificates and recommendation letter
+        # Extract file metadata
         certificates_data = validated_data.pop('certificates', [])
-        recommendation_letter = validated_data.pop('recommendation_letter', None)
+        recommendation_letter_data = validated_data.pop('recommendation_letter', None)
         reward_id = validated_data.pop('reward_id')
+
+        # Handle recommendation letter file
+        recommendation_letter_file = None
+        if recommendation_letter_data and recommendation_letter_data.get('file_path'):
+            from django.core.files.storage import default_storage
+            from django.core.files.base import ContentFile
+
+            try:
+                # Read file from temporary storage
+                file_content = default_storage.open(recommendation_letter_data['file_path']).read()
+                recommendation_letter_file = ContentFile(
+                    file_content,
+                    name=recommendation_letter_data['original_name']
+                )
+            except Exception as e:
+                print(f"Error reading recommendation letter: {e}")
 
         # Create application
         application = Application.objects.create(
@@ -278,25 +290,58 @@ class ApplicationFinalSerializer(serializers.Serializer):
             neighborhood=validated_data['neighborhood'],
             activity=validated_data['activity'],
             activity_description=validated_data['activity_description'],
-            recommendation_letter=recommendation_letter,
+            recommendation_letter=recommendation_letter_file,
             source=validated_data.get('source', 'web'),
             status='yuborilgan'
         )
 
-        # Create certificates
-        for certificate_file in certificates_data:
-            Certificates.objects.create(
-                application=application,
-                file=certificate_file
-            )
+        # Create certificates from file metadata
+        for cert_data in certificates_data:
+            if cert_data.get('file_path'):
+                try:
+                    # Read file from temporary storage
+                    file_content = default_storage.open(cert_data['file_path']).read()
+                    certificate_file = ContentFile(
+                        file_content,
+                        name=cert_data['original_name']
+                    )
+
+                    Certificates.objects.create(
+                        application=application,
+                        file=certificate_file
+                    )
+                except Exception as e:
+                    print(f"Error reading certificate {cert_data['original_name']}: {e}")
+
+        # Clean up temporary files after successful creation
+        self._cleanup_temp_files(certificates_data, recommendation_letter_data)
 
         return application
+
+    def _cleanup_temp_files(self, certificates_data, recommendation_letter_data):
+        """Clean up temporary files"""
+        from django.core.files.storage import default_storage
+
+        # Clean up recommendation letter
+        if recommendation_letter_data and recommendation_letter_data.get('file_path'):
+            try:
+                default_storage.delete(recommendation_letter_data['file_path'])
+            except Exception as e:
+                print(f"Error deleting temp file: {e}")
+
+        # Clean up certificates
+        for cert_data in certificates_data:
+            if cert_data.get('file_path'):
+                try:
+                    default_storage.delete(cert_data['file_path'])
+                except Exception as e:
+                    print(f"Error deleting temp file: {e}")
 
 
 class ApplicationDetailSerializer(serializers.ModelSerializer):
     """Serializer for displaying complete application details"""
     user_full_name = serializers.CharField(source='user.get_full_name', read_only=True)
-    user_jshshir = serializers.CharField(source='user.jshshir', read_only=True)
+    user_pinfl = serializers.CharField(source='user.pinfl', read_only=True)
     user_phone = serializers.CharField(source='user.phone_number', read_only=True)
     reward_name = serializers.CharField(source='reward.name', read_only=True)
     certificates = serializers.SerializerMethodField()
@@ -306,7 +351,7 @@ class ApplicationDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Application
         fields = [
-            'id', 'user_full_name', 'user_jshshir', 'user_phone',
+            'id', 'user_full_name', 'user_pinfl', 'user_phone',
             'reward_name', 'status', 'status_display',
             'area', 'area_display', 'district', 'neighborhood',
             'activity', 'activity_description', 'recommendation_letter',
@@ -326,7 +371,6 @@ class ApplicationDetailSerializer(serializers.ModelSerializer):
         ]
 
 
-# Session-based serializers for temporary storage
 class ApplicationSessionSerializer(serializers.Serializer):
     """Serializer for session-based application data storage"""
     step1_data = serializers.JSONField(required=False)

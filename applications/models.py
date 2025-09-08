@@ -102,5 +102,12 @@ class Application(models.Model):
         verbose_name = 'Application'
         verbose_name_plural = 'Applications'
 
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'reward'],
+                name='unique_user_reward_application'
+            )
+        ]
+
     def __str__(self):
         return f"{self.user.get_full_name}'s application"

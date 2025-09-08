@@ -1,4 +1,8 @@
 # views.py
+import os
+import uuid
+
+from django.core.files.storage import default_storage
 from django_filters import OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import status, generics, viewsets
@@ -21,41 +25,6 @@ from .serializers import (
 )
 from django.db.models import Q, Count
 from .permissions import RewardPermission
-
-
-class MultiStepApplicationMixin:
-    """Mixin for handling session-based multi-step forms"""
-
-    def get_session_key(self, request):
-        """Generate unique session key for application"""
-        user_id = request.user.id
-        reward_id = request.data.get('reward_id') or request.session.get('application_reward_id')
-        return f"application_draft_{user_id}_{reward_id}"
-
-    def get_session_data(self, request):
-        """Get application data from session/cache"""
-        session_key = self.get_session_key(request)
-        return cache.get(session_key, {})
-
-    def save_session_data(self, request, data, step=None):
-        """Save application data to session/cache"""
-        session_key = self.get_session_key(request)
-        session_data = self.get_session_data(request)
-
-        if step:
-            session_data[f'step{step}_data'] = data
-            session_data['current_step'] = step
-        else:
-            session_data.update(data)
-
-        # Save reward_id in session for consistency
-        if 'reward_id' in data:
-            request.session['application_reward_id'] = data['reward_id']
-            session_data['reward_id'] = data['reward_id']
-
-        # Cache for 1 hour
-        cache.set(session_key, session_data, 3600)
-        return session_data
 
 
 class RewardViewSet(viewsets.ModelViewSet):
@@ -85,12 +54,6 @@ class RewardViewSet(viewsets.ModelViewSet):
                 filter=Q(applications__status='mukofotlangan')
             )
         )
-
-        # Filter by active status if needed
-        active_only = self.request.query_params.get('active_only', None)
-        if active_only and active_only.lower() == 'true':
-            # You can add an 'is_active' field to Reward model if needed
-            pass
 
         return queryset
 
@@ -293,6 +256,52 @@ class RewardViewSet(viewsets.ModelViewSet):
             'statistics': stats
         })
 
+
+class MultiStepApplicationMixin:
+    """Mixin for handling session-based multi-step forms"""
+
+    def get_session_key(self, request):
+        """Generate unique session key for application"""
+        user_id = request.user.id
+        # Try to get reward_id from multiple sources
+        reward_id = (
+                request.data.get('reward_id') or
+                request.GET.get('reward_id') or
+                request.session.get('application_reward_id')
+        )
+
+        # If no reward_id found, use a default session key
+        if not reward_id:
+            return f"application_draft_{user_id}"
+
+        return f"application_draft_{user_id}_{reward_id}"
+
+    def get_session_data(self, request):
+        """Get application data from session/cache"""
+        session_key = self.get_session_key(request)
+        return cache.get(session_key, {})
+
+    def save_session_data(self, request, data, step=None):
+        """Save application data to session/cache"""
+        session_key = self.get_session_key(request)
+        session_data = self.get_session_data(request)
+
+        if step:
+            session_data[f'step{step}_data'] = data
+            session_data['current_step'] = step
+        else:
+            session_data.update(data)
+
+        # Save reward_id in session for consistency
+        if 'reward_id' in data:
+            request.session['application_reward_id'] = data['reward_id']
+            session_data['reward_id'] = data['reward_id']
+
+        # Cache for 1 hour
+        cache.set(session_key, session_data, 3600)
+        return session_data
+
+
 class ApplicationStep1View(MultiStepApplicationMixin, APIView):
     """
     Step 1: Personal Information
@@ -311,7 +320,7 @@ class ApplicationStep1View(MultiStepApplicationMixin, APIView):
             step1_data = {
                 'first_name': request.user.first_name or '',
                 'last_name': request.user.last_name or '',
-                'pinfl': getattr(request.user, 'pinfl', '') or '',
+                'jshshir': getattr(request.user, 'jshshir', '') or '',
                 'phone_number': getattr(request.user, 'phone_number', '') or '',
                 'area': '',
                 'district': '',
@@ -329,6 +338,21 @@ class ApplicationStep1View(MultiStepApplicationMixin, APIView):
         serializer = ApplicationStep1Serializer(data=request.data)
 
         if serializer.is_valid():
+            # Check if user already has application for this reward
+            reward_id = serializer.validated_data['reward_id']
+            existing_application = Application.objects.filter(
+                user=request.user,
+                reward_id=reward_id
+            ).first()
+
+            if existing_application:
+                return Response({
+                    'success': False,
+                    'message': 'Siz ushbu mukofot uchun allaqachon ariza topshirgansiz',
+                    'existing_application_id': existing_application.id,
+                    'existing_application_status': existing_application.status
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             # Save to session
             session_data = self.save_session_data(
                 request,
@@ -429,33 +453,73 @@ class ApplicationStep3View(MultiStepApplicationMixin, APIView):
         serializer = ApplicationStep3Serializer(data=request.data)
 
         if serializer.is_valid():
-            # Save files temporarily (you might want to use a temporary storage)
             validated_data = serializer.validated_data.copy()
 
-            # Handle file uploads - store file references in session
+            # Prepare data for session storage (JSON serializable)
+            session_data = {}
+
+            # Handle recommendation letter file
             if 'recommendation_letter' in validated_data and validated_data['recommendation_letter']:
-                # In production, you might want to save to a temporary location
-                validated_data['recommendation_letter_name'] = validated_data['recommendation_letter'].name
+                rec_file = validated_data['recommendation_letter']
 
+                # Generate unique filename
+                file_extension = os.path.splitext(rec_file.name)[1]
+                unique_filename = f"temp_rec_{uuid.uuid4()}{file_extension}"
+
+                # Save file temporarily
+                file_path = default_storage.save(
+                    f"temp_uploads/{unique_filename}",
+                    rec_file
+                )
+
+                session_data['recommendation_letter'] = {
+                    'original_name': rec_file.name,
+                    'file_path': file_path,
+                    'file_size': rec_file.size
+                }
+
+            # Handle certificates
             if 'certificates' in validated_data and validated_data['certificates']:
-                validated_data['certificates_names'] = [cert.name for cert in validated_data['certificates']]
+                certificates_data = []
 
-            # Save to session
-            self.save_session_data(
-                request,
-                validated_data,
-                step=3
-            )
+                for cert_file in validated_data['certificates']:
+                    # Generate unique filename
+                    file_extension = os.path.splitext(cert_file.name)[1]
+                    unique_filename = f"temp_cert_{uuid.uuid4()}{file_extension}"
+
+                    # Save file temporarily
+                    file_path = default_storage.save(
+                        f"temp_uploads/{unique_filename}",
+                        cert_file
+                    )
+
+                    certificates_data.append({
+                        'original_name': cert_file.name,
+                        'file_path': file_path,
+                        'file_size': cert_file.size
+                    })
+
+                session_data['certificates'] = certificates_data
+
+            # Save to session (now JSON serializable)
+            self.save_session_data(request, session_data, step=3)
+
+            # Prepare response data
+            response_data = {}
+            if 'recommendation_letter' in session_data:
+                response_data['recommendation_letter'] = session_data['recommendation_letter']['original_name']
+
+            if 'certificates' in session_data:
+                response_data['certificates_count'] = len(session_data['certificates'])
+                response_data['certificates_names'] = [
+                    cert['original_name'] for cert in session_data['certificates']
+                ]
 
             return Response({
                 'success': True,
                 'message': 'Hujjatlar saqlandi',
                 'next_step': 4,  # Final review step
-                'data': {
-                    'recommendation_letter': validated_data.get('recommendation_letter_name'),
-                    'certificates_count': len(validated_data.get('certificates', [])),
-                    'certificates_names': validated_data.get('certificates_names', [])
-                }
+                'data': response_data
             })
 
         return Response({
@@ -487,11 +551,18 @@ class ApplicationFinalReviewView(MultiStepApplicationMixin, APIView):
                 'missing_steps': missing_steps
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Combine all data
+        # Combine all data for review
         complete_data = {}
         complete_data.update(session_data.get('step1_data', {}))
         complete_data.update(session_data.get('step2_data', {}))
-        complete_data.update(session_data.get('step3_data', {}))
+
+        # Handle step3 data (files) for display
+        step3_data = session_data.get('step3_data', {})
+        if 'recommendation_letter' in step3_data:
+            complete_data['recommendation_letter_info'] = step3_data['recommendation_letter']
+        if 'certificates' in step3_data:
+            complete_data['certificates_info'] = step3_data['certificates']
+
         complete_data['reward_id'] = session_data.get('reward_id')
 
         # Get reward information
@@ -508,7 +579,7 @@ class ApplicationFinalReviewView(MultiStepApplicationMixin, APIView):
         })
 
     def post(self, request):
-        """Submit final application"""
+        """Submit final application - NO FILE UPLOADS HERE"""
         session_data = self.get_session_data(request)
 
         # Check if all steps are completed
@@ -520,15 +591,55 @@ class ApplicationFinalReviewView(MultiStepApplicationMixin, APIView):
                     'message': f'{step} yakunlanmagan'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Combine all data
+        # Prepare final data from session
         final_data = {}
-        final_data.update(session_data.get('step1_data', {}))
-        final_data.update(session_data.get('step2_data', {}))
-        final_data.update(session_data.get('step3_data', {}))
-        final_data['reward_id'] = session_data.get('reward_id')
+        reward_id = session_data.get('step1_data', {}).get('reward_id')
+        existing_application = Application.objects.filter(
+            user=request.user,
+            reward_id=reward_id
+        ).first()
+
+        if existing_application:
+            return Response({
+                'success': False,
+                'message': 'Siz ushbu mukofot uchun allaqachon ariza topshirgansiz',
+                'existing_application': {
+                    'id': existing_application.id,
+                    'status': existing_application.status,
+                    'created_at': existing_application.created_at
+                }
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Step 1 data
+        step1_data = session_data.get('step1_data', {})
+        final_data.update({
+            'first_name': step1_data.get('first_name'),
+            'last_name': step1_data.get('last_name'),
+            'pinfl': step1_data.get('pinfl'),
+            'phone_number': step1_data.get('phone_number'),
+            'area': step1_data.get('area'),
+            'district': step1_data.get('district'),
+            'neighborhood': step1_data.get('neighborhood'),
+            'reward_id': step1_data.get('reward_id')
+        })
+
+        # Step 2 data
+        step2_data = session_data.get('step2_data', {})
+        final_data.update({
+            'activity': step2_data.get('activity'),
+            'activity_description': step2_data.get('activity_description')
+        })
+
+        # Step 3 data (file metadata)
+        step3_data = session_data.get('step3_data', {})
+        final_data.update({
+            'recommendation_letter': step3_data.get('recommendation_letter'),
+            'certificates': step3_data.get('certificates', [])
+        })
+
         final_data['source'] = 'web'
 
-        # Create final application
+        # Create final application using the fixed serializer
         serializer = ApplicationFinalSerializer(
             data=final_data,
             context={'request': request}
@@ -562,6 +673,105 @@ class ApplicationFinalReviewView(MultiStepApplicationMixin, APIView):
             'success': False,
             'errors': serializer.errors
         }, status=status.HTTP_400_BAD_REQUEST)
+
+# class ApplicationFinalReviewView(MultiStepApplicationMixin, APIView):
+#     """
+#     Step 4: Final Review and Submit
+#     GET: Show all collected data for review
+#     POST: Submit final application
+#     """
+#     permission_classes = [IsAuthenticated]
+#
+#     def get(self, request):
+#         """Get complete application data for final review"""
+#         session_data = self.get_session_data(request)
+#
+#         # Check if all steps are completed
+#         required_steps = ['step1_data', 'step2_data', 'step3_data']
+#         missing_steps = [step for step in required_steps if step not in session_data]
+#
+#         if missing_steps:
+#             return Response({
+#                 'success': False,
+#                 'message': 'Barcha qadamlar yakunlanmagan',
+#                 'missing_steps': missing_steps
+#             }, status=status.HTTP_400_BAD_REQUEST)
+#
+#         # Combine all data
+#         complete_data = {}
+#         complete_data.update(session_data.get('step1_data', {}))
+#         complete_data.update(session_data.get('step2_data', {}))
+#         complete_data.update(session_data.get('step3_data', {}))
+#         complete_data['reward_id'] = session_data.get('reward_id')
+#
+#         # Get reward information
+#         try:
+#             reward = Reward.objects.get(id=complete_data['reward_id'])
+#             complete_data['reward_name'] = reward.name
+#         except Reward.DoesNotExist:
+#             pass
+#
+#         return Response({
+#             'success': True,
+#             'data': complete_data,
+#             'current_step': 4
+#         })
+#
+#     def post(self, request):
+#         """Submit final application"""
+#         session_data = self.get_session_data(request)
+#
+#         # Check if all steps are completed
+#         required_steps = ['step1_data', 'step2_data', 'step3_data']
+#         for step in required_steps:
+#             if step not in session_data:
+#                 return Response({
+#                     'success': False,
+#                     'message': f'{step} yakunlanmagan'
+#                 }, status=status.HTTP_400_BAD_REQUEST)
+#
+#         # Combine all data
+#         final_data = {}
+#         final_data.update(session_data.get('step1_data', {}))
+#         final_data.update(session_data.get('step2_data', {}))
+#         final_data.update(session_data.get('step3_data', {}))
+#         final_data['reward_id'] = session_data.get('reward_id')
+#         final_data['source'] = 'web'
+#
+#         # Create final application
+#         serializer = ApplicationFinalSerializer(
+#             data=final_data,
+#             context={'request': request}
+#         )
+#
+#         if serializer.is_valid():
+#             try:
+#                 application = serializer.create(serializer.validated_data)
+#
+#                 # Clear session data after successful submission
+#                 cache.delete(self.get_session_key(request))
+#                 if 'application_reward_id' in request.session:
+#                     del request.session['application_reward_id']
+#
+#                 # Return created application data
+#                 response_serializer = ApplicationDetailSerializer(application)
+#
+#                 return Response({
+#                     'success': True,
+#                     'message': 'Ariza muvaffaqiyatli yuborildi',
+#                     'application': response_serializer.data
+#                 }, status=status.HTTP_201_CREATED)
+#
+#             except Exception as e:
+#                 return Response({
+#                     'success': False,
+#                     'message': f'Ariza saqlashda xatolik: {str(e)}'
+#                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+#
+#         return Response({
+#             'success': False,
+#             'errors': serializer.errors
+#         }, status=status.HTTP_400_BAD_REQUEST)
 
 
 class ApplicationStatusView(MultiStepApplicationMixin, APIView):
@@ -613,6 +823,31 @@ class CertificateUploadView(APIView):
             'success': False,
             'errors': serializer.errors
         }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ApplicationDebugView(MultiStepApplicationMixin, APIView):
+    """Debug view to check session data"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """Get all session data for debugging"""
+        session_key = self.get_session_key(request)
+        cache_data = cache.get(session_key, {})
+        django_session_data = request.session.get(f'app_draft_{request.user.id}', {})
+
+        return Response({
+            'success': True,
+            'debug_info': {
+                'user_id': request.user.id,
+                'session_key': session_key,
+                'reward_id_in_session': request.session.get('application_reward_id'),
+                'cache_data': cache_data,
+                'django_session_data': django_session_data,
+                'cache_has_data': bool(cache_data),
+                'session_has_data': bool(django_session_data),
+                'all_session_keys': list(request.session.keys()),
+            }
+        })
 
 
 @api_view(['DELETE'])
