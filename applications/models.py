@@ -3,24 +3,8 @@ from django.db import models
 from accounts.models import CustomUser
 
 
-class Reward(models.Model):
-    name = models.CharField(max_length=100)
-    description = models.TextField()
-    image = models.ImageField(upload_to='rewards/')
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ['created_at']
-        verbose_name = 'Reward'
-        verbose_name_plural = 'Rewards'
-
-    def __str__(self):
-        return self.name
-
-
 class File(models.Model):
-    file = models.FileField(upload_to='files/',)
+    file = models.FileField(upload_to='files/', )
     application = models.ForeignKey('Application', on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -37,9 +21,25 @@ class File(models.Model):
         verbose_name_plural = 'Files'
 
 
+class Reward(models.Model):
+    name = models.CharField(max_length=100)
+    description = models.TextField()
+    image = models.ImageField(upload_to='rewards/')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['created_at']
+        verbose_name = 'Reward'
+        verbose_name_plural = 'Rewards'
+
+    def __str__(self):
+        return self.name
+
+
 class Certificates(models.Model):
     application = models.ForeignKey('Application', on_delete=models.CASCADE)
-    file = models.FileField(upload_to='certificates/',)
+    file = models.FileField(upload_to='certificates/', )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -58,14 +58,14 @@ class Certificates(models.Model):
 
 class Application(models.Model):
     STATUS_CHOICES = (
-    ('yuborilgan', 'Yuborilgan'),
-    ('mahalla', 'Mahalla jarayonida'),
-    ('tuman', 'Tuman'),
-    ('hudud', 'Hudud'),
-    ('oxirgi_tasdiqlash', 'Oxirgi tasdiqlash'),
-    ('mukofotlangan', 'Mukofotlangan'),
-    ('rad_etilgan', 'Rad etilgan'),
-   )
+        ('yuborilgan', 'Yuborilgan'),
+        ('mahalla', 'Mahalla jarayonida'),
+        ('tuman', 'Tuman'),
+        ('hudud', 'Hudud'),
+        ('oxirgi_tasdiqlash', 'Oxirgi tasdiqlash'),
+        ('mukofotlangan', 'Mukofotlangan'),
+        ('rad_etilgan', 'Rad etilgan'),
+    )
 
     AREA_CHOICES = (
         ('Andijon', 'Andijon viloyati'),
@@ -104,4 +104,3 @@ class Application(models.Model):
 
     def __str__(self):
         return f"{self.user.get_full_name}'s application"
-
