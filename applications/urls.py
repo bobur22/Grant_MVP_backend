@@ -1,12 +1,24 @@
+# urls.py
 from django.urls import path, include
+from . import views
 from rest_framework.routers import DefaultRouter
-from .views import RewardViewSet, FileViewSet, ApplicationViewSet
-
 
 router = DefaultRouter()
-router.register(r'rewards', RewardViewSet, basename='reward')
-router.register(r'files', FileViewSet, basename='file')
-router.register(r'applications', ApplicationViewSet, basename='application')
+router.register(r'rewards', views.RewardViewSet, basename='reward')
 
-urlpatterns = []
+app_name = 'applications'
+
+urlpatterns = [
+    # Multi-step application URLs
+    path('application/step1/', views.ApplicationStep1View.as_view(), name='application-step1'),
+    path('application/step2/', views.ApplicationStep2View.as_view(), name='application-step2'),
+    path('application/step3/', views.ApplicationStep3View.as_view(), name='application-step3'),
+    path('application/final-review/', views.ApplicationFinalReviewView.as_view(), name='application-final'),
+    path('application/status/', views.ApplicationStatusView.as_view(), name='application-status'),
+
+    # File upload
+    path('certificate/upload/', views.CertificateUploadView.as_view(), name='certificate-upload'),
+
+    path('clear-draft/', views.clear_draft, name='clear-draft'),
+]
 urlpatterns += router.urls

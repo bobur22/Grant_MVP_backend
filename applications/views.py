@@ -1,374 +1,630 @@
-from rest_framework import viewsets, status, permissions
-from rest_framework.decorators import action
-from rest_framework.response import Response
+# views.py
+from django_filters import OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.filters import SearchFilter, OrderingFilter
-from django.db import transaction
-from .models import Reward, File, Application
+from rest_framework import status, generics, viewsets
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.filters import SearchFilter
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from django.core.cache import cache
+from rest_framework.decorators import action
+from .models import Application, Reward, Certificates
 from .serializers import (
-    RewardSerializer, FileSerializer, ApplicationListSerializer,
-    ApplicationCreateSerializer, ApplicationDetailSerializer,
-    ApplicationStatusUpdateSerializer
+    ApplicationStep1Serializer,
+    ApplicationStep2Serializer,
+    ApplicationStep3Serializer,
+    ApplicationFinalSerializer,
+    ApplicationDetailSerializer,
+    ApplicationSessionSerializer,
+    CertificateUploadSerializer, RewardListSerializer, RewardCreateUpdateSerializer, RewardDetailSerializer
 )
-from .permissions import IsOwnerOrStaff
+from django.db.models import Q, Count
+from .permissions import RewardPermission
 
 
-class RewardViewSet(viewsets.ReadOnlyModelViewSet):
+class MultiStepApplicationMixin:
+    """Mixin for handling session-based multi-step forms"""
+
+    def get_session_key(self, request):
+        """Generate unique session key for application"""
+        user_id = request.user.id
+        reward_id = request.data.get('reward_id') or request.session.get('application_reward_id')
+        return f"application_draft_{user_id}_{reward_id}"
+
+    def get_session_data(self, request):
+        """Get application data from session/cache"""
+        session_key = self.get_session_key(request)
+        return cache.get(session_key, {})
+
+    def save_session_data(self, request, data, step=None):
+        """Save application data to session/cache"""
+        session_key = self.get_session_key(request)
+        session_data = self.get_session_data(request)
+
+        if step:
+            session_data[f'step{step}_data'] = data
+            session_data['current_step'] = step
+        else:
+            session_data.update(data)
+
+        # Save reward_id in session for consistency
+        if 'reward_id' in data:
+            request.session['application_reward_id'] = data['reward_id']
+            session_data['reward_id'] = data['reward_id']
+
+        # Cache for 1 hour
+        cache.set(session_key, session_data, 3600)
+        return session_data
+
+
+class RewardViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for listing and retrieving rewards.
-    Only read operations are allowed for rewards.
+    ViewSet for Reward model with role-based permissions
+
+    Regular users: GET (list, retrieve)
+    Admin/Staff: Full CRUD operations
     """
-    queryset = Reward.objects.all()
-    serializer_class = RewardSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    filter_backends = [SearchFilter, OrderingFilter]
-    search_fields = ['name', 'description']
-    ordering_fields = ['created_at', 'name']
-    ordering = ['-created_at']
-
-
-
-    def list(self, request, *args, **kwargs):
-        """List all available rewards"""
-        try:
-            queryset = self.filter_queryset(self.get_queryset())
-            page = self.paginate_queryset(queryset)
-            if getattr(self, 'swagger_fake_view', False):
-                return queryset.none()
-
-            if page is not None:
-                serializer = self.get_serializer(page, many=True)
-                return self.get_paginated_response(serializer.data)
-
-            serializer = self.get_serializer(queryset, many=True)
-            return Response({
-                'success': True,
-                'message': 'Rewards retrieved successfully',
-                'data': serializer.data
-            }, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            return Response({
-                'success': False,
-                'message': 'Error retrieving rewards',
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    def retrieve(self, request, *args, **kwargs):
-        """Retrieve a specific reward"""
-        try:
-            instance = self.get_object()
-            serializer = self.get_serializer(instance)
-            return Response({
-                'success': True,
-                'message': 'Reward retrieved successfully',
-                'data': serializer.data
-            }, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            return Response({
-                'success': False,
-                'message': 'Error retrieving reward',
-                'error': str(e)
-            }, status=status.HTTP_404_NOT_FOUND)
-
-
-class FileViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet for managing files.
-    Users can upload and manage their files.
-    """
-    queryset = File.objects.all()
-    serializer_class = FileSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    def create(self, request, *args, **kwargs):
-        """Upload a new file"""
-        try:
-            serializer = self.get_serializer(data=request.data)
-
-            if serializer.is_valid():
-                with transaction.atomic():
-                    file_instance = serializer.save()
-
-                return Response({
-                    'success': True,
-                    'message': 'File uploaded successfully',
-                    'data': serializer.data
-                }, status=status.HTTP_201_CREATED)
-            else:
-                return Response({
-                    'success': False,
-                    'message': 'File upload failed',
-                    'errors': serializer.errors
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-        except Exception as e:
-            return Response({
-                'success': False,
-                'message': 'Error uploading file',
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    def list(self, request, *args, **kwargs):
-        """List all files"""
-        try:
-            queryset = self.get_queryset()
-            serializer = self.get_serializer(queryset, many=True)
-            if getattr(self, 'swagger_fake_view', False):
-                return queryset.none()
-            return Response({
-                'success': True,
-                'message': 'Files retrieved successfully',
-                'data': serializer.data
-            }, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            return Response({
-                'success': False,
-                'message': 'Error retrieving files',
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-class ApplicationViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet for managing applications.
-    - Users can create and view their own applications
-    - Staff/Admin can view all applications and update status
-    """
-    queryset = Application.objects.select_related('reward', 'user', 'file').all()
-    permission_classes = [permissions.IsAuthenticated, IsOwnerOrStaff]
+    permission_classes = [RewardPermission]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['status', 'reward']
-    search_fields = ['user__username', 'user__first_name', 'user__last_name', 'source']
-    ordering_fields = ['created_at', 'updated_at', 'status']
+    search_fields = ['name', 'description']
+    filterset_fields = ['created_at']
+    ordering_fields = ['name', 'created_at', 'applications_count']
     ordering = ['-created_at']
+
+    def get_queryset(self):
+        """Get queryset with annotations"""
+        queryset = Reward.objects.annotate(
+            applications_count=Count('applications'),
+            pending_applications=Count(
+                'applications',
+                filter=Q(applications__status__in=['yuborilgan', 'mahalla', 'tuman', 'hudud'])
+            ),
+            approved_applications=Count(
+                'applications',
+                filter=Q(applications__status='mukofotlangan')
+            )
+        )
+
+        # Filter by active status if needed
+        active_only = self.request.query_params.get('active_only', None)
+        if active_only and active_only.lower() == 'true':
+            # You can add an 'is_active' field to Reward model if needed
+            pass
+
+        return queryset
 
     def get_serializer_class(self):
         """Return appropriate serializer based on action"""
-        if self.action == 'create':
-            return ApplicationCreateSerializer
-        elif self.action in ['update_status']:
-            return ApplicationStatusUpdateSerializer
+        if self.action == 'list':
+            return RewardListSerializer
         elif self.action == 'retrieve':
-            return ApplicationDetailSerializer
-        return ApplicationListSerializer
-
-    def get_queryset(self):
-        """
-        Filter queryset based on user permissions:
-        - Staff/Admin: see all applications
-        - Regular users: see only their own applications
-        """
-        queryset = super().get_queryset()
-        if getattr(self, 'swagger_fake_view', False):
-            return queryset.none()
-
-        if self.request.user.is_staff or self.request.user.is_superuser:
-            return queryset
+            return RewardDetailSerializer
+        elif self.action in ['create', 'update', 'partial_update']:
+            return RewardCreateUpdateSerializer
         else:
-            return queryset.filter(user=self.request.user)
+            return RewardDetailSerializer
 
     def list(self, request, *args, **kwargs):
-        """List applications based on user permissions"""
-        try:
-            queryset = self.filter_queryset(self.get_queryset())
-            page = self.paginate_queryset(queryset)
+        """List all rewards with search and filter"""
+        queryset = self.filter_queryset(self.get_queryset())
 
-            if page is not None:
-                serializer = self.get_serializer(page, many=True)
-                return self.get_paginated_response(serializer.data)
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response({
+                'success': True,
+                'rewards': serializer.data
+            })
 
-            serializer = self.get_serializer(queryset, many=True)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            'success': True,
+            'rewards': serializer.data,
+            'count': queryset.count()
+        })
 
-            message = 'All applications retrieved successfully' if request.user.is_staff else 'Your applications retrieved successfully'
+    def retrieve(self, request, *args, **kwargs):
+        """Retrieve single reward with detailed info"""
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+
+        return Response({
+            'success': True,
+            'reward': serializer.data
+        })
+
+    def create(self, request, *args, **kwargs):
+        """Create new reward (Admin/Staff only)"""
+        serializer = self.get_serializer(data=request.data)
+
+        if serializer.is_valid():
+            reward = serializer.save()
+
+            # Return detailed data
+            detail_serializer = RewardDetailSerializer(
+                reward,
+                context={'request': request}
+            )
 
             return Response({
                 'success': True,
-                'message': message,
-                'data': serializer.data,
-                'total_count': queryset.count()
-            }, status=status.HTTP_200_OK)
+                'message': 'Mukofot muvaffaqiyatli yaratildi',
+                'reward': detail_serializer.data
+            }, status=status.HTTP_201_CREATED)
 
-        except Exception as e:
+        return Response({
+            'success': False,
+            'errors': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    def update(self, request, *args, **kwargs):
+        """Update reward (Admin/Staff only)"""
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+
+        if serializer.is_valid():
+            reward = serializer.save()
+
+            # Return detailed data
+            detail_serializer = RewardDetailSerializer(
+                reward,
+                context={'request': request}
+            )
+
+            return Response({
+                'success': True,
+                'message': 'Mukofot muvaffaqiyatli yangilandi',
+                'reward': detail_serializer.data
+            })
+
+        return Response({
+            'success': False,
+            'errors': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    def destroy(self, request, *args, **kwargs):
+        """Delete reward (Admin/Staff only)"""
+        instance = self.get_object()
+
+        # Check if reward has applications
+        applications_count = instance.applications.count()
+        if applications_count > 0:
             return Response({
                 'success': False,
-                'message': 'Error retrieving applications',
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                'message': f'Bu mukofotga {applications_count} ta ariza bog\'langan. O\'chirib bo\'lmaydi.'
+            }, status=status.HTTP_400_BAD_REQUEST)
 
-    def create(self, request, *args, **kwargs):
-        """Create a new application with files"""
+        reward_name = instance.name
+        instance.delete()
+
+        return Response({
+            'success': True,
+            'message': f'"{reward_name}" mukofoti o\'chirildi'
+        }, status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['get'])
+    def applications(self, request, pk=None):
+        """Get applications for specific reward"""
+        reward = self.get_object()
+        applications = reward.applications.all()
+
+        # Filter by status if provided
+        status_filter = request.query_params.get('status', None)
+        if status_filter:
+            applications = applications.filter(status=status_filter)
+
+        # Paginate results
+        page = self.paginate_queryset(applications)
+        if page is not None:
+            serializer = ApplicationDetailSerializer(page, many=True)
+            return self.get_paginated_response({
+                'success': True,
+                'applications': serializer.data
+            })
+
+        serializer = ApplicationDetailSerializer(applications, many=True)
+        return Response({
+            'success': True,
+            'reward_name': reward.name,
+            'applications': serializer.data,
+            'count': applications.count()
+        })
+
+    @action(detail=True, methods=['get'])
+    def statistics(self, request, pk=None):
+        """Get detailed statistics for a reward (Admin/Staff only)"""
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({
+                'success': False,
+                'message': 'Ruxsat yo\'q'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        reward = self.get_object()
+        applications = reward.applications.all()
+
+        stats = {
+            'total_applications': applications.count(),
+            'status_breakdown': {},
+            'monthly_applications': [],
+        }
+
+        # Status breakdown
+        for status_code, status_name in Application.STATUS_CHOICES:
+            count = applications.filter(status=status_code).count()
+            stats['status_breakdown'][status_code] = {
+                'name': status_name,
+                'count': count
+            }
+
+        # Monthly applications (last 12 months)
+        from django.utils import timezone
+        from dateutil.relativedelta import relativedelta
+
+        end_date = timezone.now()
+        start_date = end_date - relativedelta(months=12)
+
+        # This is a simplified version - you might want to use Django's aggregation
+        monthly_data = []
+        current_date = start_date
+
+        while current_date <= end_date:
+            month_start = current_date.replace(day=1)
+            next_month = month_start + relativedelta(months=1)
+
+            count = applications.filter(
+                created_at__gte=month_start,
+                created_at__lt=next_month
+            ).count()
+
+            monthly_data.append({
+                'month': month_start.strftime('%Y-%m'),
+                'count': count
+            })
+
+            current_date = next_month
+
+        stats['monthly_applications'] = monthly_data
+
+        return Response({
+            'success': True,
+            'reward_name': reward.name,
+            'statistics': stats
+        })
+
+class ApplicationStep1View(MultiStepApplicationMixin, APIView):
+    """
+    Step 1: Personal Information
+    POST: Save personal info and move to step 2
+    GET: Retrieve current step 1 data
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """Get current step 1 data"""
+        session_data = self.get_session_data(request)
+        step1_data = session_data.get('step1_data', {})
+
+        # Pre-fill with user data if available
+        if not step1_data and request.user:
+            step1_data = {
+                'first_name': request.user.first_name or '',
+                'last_name': request.user.last_name or '',
+                'pinfl': getattr(request.user, 'pinfl', '') or '',
+                'phone_number': getattr(request.user, 'phone_number', '') or '',
+                'area': '',
+                'district': '',
+                'neighborhood': ''
+            }
+
+        return Response({
+            'success': True,
+            'data': step1_data,
+            'current_step': 1
+        })
+
+    def post(self, request):
+        """Save step 1 data and proceed to step 2"""
+        serializer = ApplicationStep1Serializer(data=request.data)
+
+        if serializer.is_valid():
+            # Save to session
+            session_data = self.save_session_data(
+                request,
+                serializer.validated_data,
+                step=1
+            )
+
+            return Response({
+                'success': True,
+                'message': 'Shaxsiy ma\'lumotlar saqlandi',
+                'next_step': 2,
+                'data': serializer.validated_data
+            })
+
+        return Response({
+            'success': False,
+            'errors': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ApplicationStep2View(MultiStepApplicationMixin, APIView):
+    """
+    Step 2: Activity Information
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """Get current step 2 data"""
+        session_data = self.get_session_data(request)
+        step2_data = session_data.get('step2_data', {})
+
+        return Response({
+            'success': True,
+            'data': step2_data,
+            'current_step': 2
+        })
+
+    def post(self, request):
+        """Save step 2 data and proceed to step 3"""
+        # Check if step 1 is completed
+        session_data = self.get_session_data(request)
+        if 'step1_data' not in session_data:
+            return Response({
+                'success': False,
+                'message': 'Avval 1-qadamni yakunlang'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = ApplicationStep2Serializer(data=request.data)
+
+        if serializer.is_valid():
+            # Save to session
+            self.save_session_data(
+                request,
+                serializer.validated_data,
+                step=2
+            )
+
+            return Response({
+                'success': True,
+                'message': 'Faoliyat ma\'lumotlari saqlandi',
+                'next_step': 3,
+                'data': serializer.validated_data
+            })
+
+        return Response({
+            'success': False,
+            'errors': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ApplicationStep3View(MultiStepApplicationMixin, APIView):
+    """
+    Step 3: Document Upload
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """Get current step 3 data"""
+        session_data = self.get_session_data(request)
+        step3_data = session_data.get('step3_data', {})
+
+        return Response({
+            'success': True,
+            'data': step3_data,
+            'current_step': 3
+        })
+
+    def post(self, request):
+        """Save step 3 data and proceed to final review"""
+        # Check if previous steps are completed
+        session_data = self.get_session_data(request)
+        if 'step1_data' not in session_data or 'step2_data' not in session_data:
+            return Response({
+                'success': False,
+                'message': 'Avval oldingi qadamlarni yakunlang'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = ApplicationStep3Serializer(data=request.data)
+
+        if serializer.is_valid():
+            # Save files temporarily (you might want to use a temporary storage)
+            validated_data = serializer.validated_data.copy()
+
+            # Handle file uploads - store file references in session
+            if 'recommendation_letter' in validated_data and validated_data['recommendation_letter']:
+                # In production, you might want to save to a temporary location
+                validated_data['recommendation_letter_name'] = validated_data['recommendation_letter'].name
+
+            if 'certificates' in validated_data and validated_data['certificates']:
+                validated_data['certificates_names'] = [cert.name for cert in validated_data['certificates']]
+
+            # Save to session
+            self.save_session_data(
+                request,
+                validated_data,
+                step=3
+            )
+
+            return Response({
+                'success': True,
+                'message': 'Hujjatlar saqlandi',
+                'next_step': 4,  # Final review step
+                'data': {
+                    'recommendation_letter': validated_data.get('recommendation_letter_name'),
+                    'certificates_count': len(validated_data.get('certificates', [])),
+                    'certificates_names': validated_data.get('certificates_names', [])
+                }
+            })
+
+        return Response({
+            'success': False,
+            'errors': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ApplicationFinalReviewView(MultiStepApplicationMixin, APIView):
+    """
+    Step 4: Final Review and Submit
+    GET: Show all collected data for review
+    POST: Submit final application
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """Get complete application data for final review"""
+        session_data = self.get_session_data(request)
+
+        # Check if all steps are completed
+        required_steps = ['step1_data', 'step2_data', 'step3_data']
+        missing_steps = [step for step in required_steps if step not in session_data]
+
+        if missing_steps:
+            return Response({
+                'success': False,
+                'message': 'Barcha qadamlar yakunlanmagan',
+                'missing_steps': missing_steps
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Combine all data
+        complete_data = {}
+        complete_data.update(session_data.get('step1_data', {}))
+        complete_data.update(session_data.get('step2_data', {}))
+        complete_data.update(session_data.get('step3_data', {}))
+        complete_data['reward_id'] = session_data.get('reward_id')
+
+        # Get reward information
         try:
-            serializer = self.get_serializer(data=request.data)
+            reward = Reward.objects.get(id=complete_data['reward_id'])
+            complete_data['reward_name'] = reward.name
+        except Reward.DoesNotExist:
+            pass
 
-            if serializer.is_valid():
-                # Check if user already has a pending/in_progress application for this reward
-                existing_application = Application.objects.filter(
-                    user=request.user,
-                    reward=serializer.validated_data['reward'],
-                    # status__in=['pending', 'in_progress']
-                    status__in=['yuborilgan']
-                ).exists()
+        return Response({
+            'success': True,
+            'data': complete_data,
+            'current_step': 4
+        })
 
-                if existing_application:
-                    return Response({
-                        'success': False,
-                        'message': 'You already have a pending or in-progress application for this reward',
-                    }, status=status.HTTP_400_BAD_REQUEST)
+    def post(self, request):
+        """Submit final application"""
+        session_data = self.get_session_data(request)
 
-                with transaction.atomic():
-                    application = serializer.save()
+        # Check if all steps are completed
+        required_steps = ['step1_data', 'step2_data', 'step3_data']
+        for step in required_steps:
+            if step not in session_data:
+                return Response({
+                    'success': False,
+                    'message': f'{step} yakunlanmagan'
+                }, status=status.HTTP_400_BAD_REQUEST)
 
-                # Use detail serializer for response
+        # Combine all data
+        final_data = {}
+        final_data.update(session_data.get('step1_data', {}))
+        final_data.update(session_data.get('step2_data', {}))
+        final_data.update(session_data.get('step3_data', {}))
+        final_data['reward_id'] = session_data.get('reward_id')
+        final_data['source'] = 'web'
+
+        # Create final application
+        serializer = ApplicationFinalSerializer(
+            data=final_data,
+            context={'request': request}
+        )
+
+        if serializer.is_valid():
+            try:
+                application = serializer.create(serializer.validated_data)
+
+                # Clear session data after successful submission
+                cache.delete(self.get_session_key(request))
+                if 'application_reward_id' in request.session:
+                    del request.session['application_reward_id']
+
+                # Return created application data
                 response_serializer = ApplicationDetailSerializer(application)
 
                 return Response({
                     'success': True,
-                    'message': 'Application submitted successfully',
-                    'data': response_serializer.data
+                    'message': 'Ariza muvaffaqiyatli yuborildi',
+                    'application': response_serializer.data
                 }, status=status.HTTP_201_CREATED)
-            else:
+
+            except Exception as e:
                 return Response({
                     'success': False,
-                    'message': 'Application submission failed',
-                    'errors': serializer.errors
-                }, status=status.HTTP_400_BAD_REQUEST)
+                    'message': f'Ariza saqlashda xatolik: {str(e)}'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        except Exception as e:
-            return Response({
-                'success': False,
-                'message': 'Error creating application',
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({
+            'success': False,
+            'errors': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
 
-    def retrieve(self, request, *args, **kwargs):
-        """Retrieve a specific application"""
-        try:
-            instance = self.get_object()
-            serializer = self.get_serializer(instance)
+
+class ApplicationStatusView(MultiStepApplicationMixin, APIView):
+    """Get current application progress status"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """Get current progress status"""
+        session_data = self.get_session_data(request)
+
+        progress = {
+            'step1_completed': 'step1_data' in session_data,
+            'step2_completed': 'step2_data' in session_data,
+            'step3_completed': 'step3_data' in session_data,
+            'current_step': session_data.get('current_step', 1),
+            'reward_id': session_data.get('reward_id'),
+        }
+
+        return Response({
+            'success': True,
+            'progress': progress
+        })
+
+
+class CertificateUploadView(APIView):
+    """Handle individual certificate uploads"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        """Upload a single certificate file"""
+        serializer = CertificateUploadSerializer(data=request.data)
+
+        if serializer.is_valid():
+            # Handle file upload temporarily
+            # In production, save to temporary storage
+            uploaded_file = serializer.validated_data['file']
 
             return Response({
                 'success': True,
-                'message': 'Application retrieved successfully',
-                'data': serializer.data
-            }, status=status.HTTP_200_OK)
+                'message': 'Fayl yuklandi',
+                'file_info': {
+                    'name': uploaded_file.name,
+                    'size': uploaded_file.size,
+                    'content_type': uploaded_file.content_type
+                }
+            })
 
-        except Exception as e:
-            return Response({
-                'success': False,
-                'message': 'Application not found',
-                'error': str(e)
-            }, status=status.HTTP_404_NOT_FOUND)
+        return Response({
+            'success': False,
+            'errors': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
 
-    @action(detail=True, methods=['patch'], permission_classes=[permissions.IsAuthenticated])
-    def update_status(self, request, pk=None):
-        """
-        Update application status (Staff/Admin only)
-        """
-        if not (request.user.is_staff or request.user.is_superuser):
-            return Response({
-                'success': False,
-                'message': 'You do not have permission to update application status'
-            }, status=status.HTTP_403_FORBIDDEN)
 
-        try:
-            application = self.get_object()
-            serializer = ApplicationStatusUpdateSerializer(
-                application,
-                data=request.data,
-                partial=True
-            )
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def clear_draft(request):
+    """Clear current application draft"""
+    reward_id = request.query_params.get('reward_id')
+    if reward_id:
+        session_key = f"application_draft_{request.user.id}_{reward_id}"
+        cache.delete(session_key)
 
-            if serializer.is_valid():
-                with transaction.atomic():
-                    updated_application = serializer.save()
-
-                # Return updated application data
-                response_serializer = ApplicationDetailSerializer(updated_application)
-
-                return Response({
-                    'success': True,
-                    'message': f'Application status updated to {updated_application.get_status_display()}',
-                    'data': response_serializer.data
-                }, status=status.HTTP_200_OK)
-            else:
-                return Response({
-                    'success': False,
-                    'message': 'Status update failed',
-                    'errors': serializer.errors
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-        except Exception as e:
-            return Response({
-                'success': False,
-                'message': 'Error updating application status',
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    @action(detail=False, methods=['get'])
-    def my_applications(self, request):
-        """Get current user's applications"""
-        try:
-            queryset = self.get_queryset().filter(user=request.user)
-            queryset = self.filter_queryset(queryset)
-
-            page = self.paginate_queryset(queryset)
-            if page is not None:
-                serializer = self.get_serializer(page, many=True)
-                return self.get_paginated_response(serializer.data)
-
-            serializer = self.get_serializer(queryset, many=True)
-
-            return Response({
-                'success': True,
-                'message': 'Your applications retrieved successfully',
-                'data': serializer.data,
-                'total_count': queryset.count()
-            }, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            return Response({
-                'success': False,
-                'message': 'Error retrieving your applications',
-                'error': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    #
-    # @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
-    # def statistics(self, request):
-    #     """Get application statistics (Staff/Admin only)"""
-    #     if not (request.user.is_staff or request.user.is_superuser):
-    #         return Response({
-    #             'success': False,
-    #             'message': 'You do not have permission to view statistics'
-    #         }, status=status.HTTP_403_FORBIDDEN)
-    #
-    #     try:
-    #         total = Application.objects.count()
-    #         pending = Application.objects.filter(status='pending').count()
-    #         in_progress = Application.objects.filter(status='in_progress').count()
-    #         accepted = Application.objects.filter(status='accepted').count()
-    #         rejected = Application.objects.filter(status='rejected').count()
-    #
-    #         stats = {
-    #             'total': total,
-    #             'pending': pending,
-    #             'in_progress': in_progress,
-    #             'accepted': accepted,
-    #             'rejected': rejected,
-    #             'completion_rate': round((accepted / total * 100), 2) if total > 0 else 0
-    #         }
-    #
-    #         return Response({
-    #             'success': True,
-    #             'message': 'Statistics retrieved successfully',
-    #             'data': stats
-    #         }, status=status.HTTP_200_OK)
-    #
-    #     except Exception as e:
-    #         return Response({
-    #             'success': False,
-    #             'message': 'Error retrieving statistics',
-    #             'error': str(e)
-    #         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    return Response({
+        'success': True,
+        'message': 'Ariza loyihasi tozalandi'
+    })
