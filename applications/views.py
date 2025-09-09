@@ -36,7 +36,7 @@ class RewardViewSet(viewsets.ModelViewSet):
     Admin/Staff: Full CRUD operations
     """
     permission_classes = [RewardPermission]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filter_backends = [DjangoFilterBackend, SearchFilter]
     search_fields = ['name', 'description']
     filterset_fields = ['created_at']
     ordering_fields = ['name', 'created_at', 'applications_count']
@@ -71,7 +71,7 @@ class RewardViewSet(viewsets.ModelViewSet):
 
     def list(self, request, *args, **kwargs):
         """List all rewards with search and filter"""
-        queryset = self.filter_queryset(self.get_queryset())
+        queryset = self.get_queryset()
 
         page = self.paginate_queryset(queryset)
         if page is not None:
@@ -197,7 +197,7 @@ class RewardViewSet(viewsets.ModelViewSet):
         })
 
     @action(detail=True, methods=['get'])
-    def statistics(self, request, pk=None):
+    def stats(self, request, pk=None):
         """Get detailed statistics for a reward (Admin/Staff only)"""
         if not (request.user.is_staff or request.user.is_superuser):
             return Response({
