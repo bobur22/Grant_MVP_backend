@@ -79,6 +79,20 @@ class FileSerializer(serializers.ModelSerializer):
         return obj.get_filename()
 
 
+class RewardSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Reward
+        fields = ['id', 'name', 'description', 'image', 'created_at']
+
+
+# class CertificatesSerializer(serializers.ModelSerializer):
+#     filename = serializers.CharField(source='get_filename', read_only=True)
+#
+#     class Meta:
+#         model = Certificates
+#         fields = ['id', 'file', 'filename', 'created_at']
+
+
 class CustomUserSerializer(serializers.ModelSerializer):
     """Basic user serializer for applications"""
 
@@ -163,6 +177,68 @@ class CertificateUploadSerializer(serializers.Serializer):
             )
 
         return value
+
+
+class ApplicationCreateSerializer(serializers.ModelSerializer):
+    certificates = serializers.ListField(
+        child=serializers.FileField(),
+        write_only=True,
+        required=False
+    )
+
+    class Meta:
+        model = Application
+        fields = [
+            'reward', 'area', 'district', 'neighborhood',
+            'activity', 'activity_description', 'recommendation_letter',
+            'source', 'certificates'
+        ]
+
+    def validate_reward(self, value):
+        """Check if user already has application for this reward"""
+        user = self.context['request'].user
+        if Application.objects.filter(user=user, reward=value).exists():
+            raise serializers.ValidationError(
+                "You have already applied for this reward."
+            )
+        return value
+
+    def create(self, validated_data):
+        certificates_data = validated_data.pop('certificates', [])
+        user = self.context['request'].user
+        application = Application.objects.create(
+            user=user,
+            **validated_data
+        )
+
+        for certificate_file in certificates_data:
+            Certificates.objects.create(
+                application=application,
+                file=certificate_file
+            )
+
+        return application
+
+
+class ApplicationListSerializer(serializers.ModelSerializer):
+    reward = RewardSerializer(read_only=True)
+    user = CustomUserSerializer(read_only=True)
+    certificates = CustomUserSerializer(
+        source='certificates_set',
+        many=True,
+        read_only=True
+    )
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    area_display = serializers.CharField(source='get_area_display', read_only=True)
+
+    class Meta:
+        model = Application
+        fields = [
+            'id', 'reward', 'user', 'status', 'status_display',
+            'area', 'area_display', 'district', 'neighborhood',
+            'activity', 'activity_description', 'recommendation_letter',
+            'source', 'certificates', 'created_at', 'updated_at'
+        ]
 
 
 class ApplicationStep3Serializer(serializers.Serializer):

@@ -9,7 +9,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import status, generics, viewsets
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.filters import SearchFilter
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.core.cache import cache
@@ -22,7 +22,8 @@ from .serializers import (
     ApplicationFinalSerializer,
     ApplicationDetailSerializer,
     ApplicationSessionSerializer,
-    CertificateUploadSerializer, RewardListSerializer, RewardCreateUpdateSerializer, RewardDetailSerializer
+    CertificateUploadSerializer, RewardListSerializer, RewardCreateUpdateSerializer, RewardDetailSerializer,
+    ApplicationListSerializer, ApplicationCreateSerializer
 )
 from django.db.models import Q, Count
 from .permissions import RewardPermission
@@ -165,35 +166,6 @@ class RewardViewSet(viewsets.ModelViewSet):
             'success': True,
             'message': f'"{reward_name}" mukofoti o\'chirildi'
         }, status=status.HTTP_204_NO_CONTENT)
-
-    @action(detail=True, methods=['get'])
-    def applications(self, request, pk=None):
-        """Get applications for specific reward"""
-        reward = self.get_object()
-        applications = reward.applications.all()
-
-        # Filter by status if provided
-        status_filter = request.query_params.get('status', None)
-        if status_filter:
-            applications = applications.filter(status=status_filter)
-
-        # Paginate results
-        page = self.paginate_queryset(applications)
-        if page is not None:
-            serializer = ApplicationDetailSerializer(page, many=True)
-            return self.get_paginated_response({
-                'success': True,
-                'applications': serializer.data
-            })
-
-        serializer = ApplicationDetailSerializer(applications, many=True)
-        return Response({
-            'success': True,
-            'reward_name': reward.name,
-            'applications': serializer.data,
-            'count': applications.count()
-        })
-
     @action(detail=True, methods=['get'])
     def stats(self, request, pk=None):
         """Get detailed statistics for a reward (Admin/Staff only)"""
@@ -724,29 +696,87 @@ class CertificateUploadView(APIView):
         }, status=status.HTTP_400_BAD_REQUEST)
 
 
-class ApplicationDebugView(MultiStepApplicationMixin, APIView):
-    """Debug view to check session data"""
+class ApplicationCreateView(generics.CreateAPIView):
+    """Create new application for a specific reward"""
+    serializer_class = ApplicationCreateSerializer
     permission_classes = [IsAuthenticated]
 
-    def get(self, request):
-        """Get all session data for debugging"""
-        session_key = self.get_session_key(request)
-        cache_data = cache.get(session_key, {})
-        django_session_data = request.session.get(f'app_draft_{request.user.id}', {})
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
 
-        return Response({
-            'success': True,
-            'debug_info': {
-                'user_id': request.user.id,
-                'session_key': session_key,
-                'reward_id_in_session': request.session.get('application_reward_id'),
-                'cache_data': cache_data,
-                'django_session_data': django_session_data,
-                'cache_has_data': bool(cache_data),
-                'session_has_data': bool(django_session_data),
-                'all_session_keys': list(request.session.keys()),
-            }
-        })
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        application = serializer.save()
+
+        return_serializer = ApplicationDetailSerializer(
+            application,
+            context={'request': request}
+        )
+        return Response(
+            return_serializer.data,
+            status=status.HTTP_201_CREATED
+        )
+
+
+class ApplicationListView(generics.ListAPIView):
+    """
+    List applications:
+    - Admin users see all applications
+    - Regular users see only their own applications
+    """
+    serializer_class = ApplicationListSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['status', 'area', 'reward']
+    ordering = ['-created_at']
+
+    def get_queryset(self):
+        if self.request.user.is_staff:
+            # Admin users see all applications
+            return Application.objects.select_related(
+                'user', 'reward'
+            ).prefetch_related('certificates_set')
+        else:
+            # Regular users see only their own applications
+            return Application.objects.filter(
+                user=self.request.user
+            ).select_related(
+                'user', 'reward'
+            ).prefetch_related('certificates_set')
+
+
+class MyApplicationsView(generics.ListAPIView):
+    """List current user's applications only"""
+    serializer_class = ApplicationListSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['status', 'area', 'reward']
+    ordering = ['-created_at']
+
+    def get_queryset(self):
+        return Application.objects.filter(
+            user=self.request.user
+        ).select_related(
+            'user', 'reward'
+        ).prefetch_related('certificates_set')
+
+
+class RewardApplicationsView(generics.ListAPIView):
+    """Get all applications for a specific reward (Admin only)"""
+    serializer_class = ApplicationListSerializer
+    permission_classes = [IsAdminUser]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['status', 'area']
+    ordering = ['-created_at']
+
+    def get_queryset(self):
+        reward_id = self.kwargs['reward_id']
+        return Application.objects.filter(
+            reward_id=reward_id
+        ).select_related(
+            'user', 'reward'
+        ).prefetch_related('certificates_set')
 
 
 @api_view(['DELETE'])
