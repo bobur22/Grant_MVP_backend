@@ -5,17 +5,59 @@ from datetime import timedelta
 from django.core.cache import cache
 from django.db import IntegrityError
 from django.utils import timezone
-from rest_framework import permissions, serializers, status
-from rest_framework.permissions import AllowAny
+from rest_framework import permissions, serializers, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 
-from .models import PhoneVerification
+from .models import PhoneVerification, CustomUser
+from .permissions import IsSelfOrAdmin
 from .serializers import (ResetPasswordSerializer, SendResetCodeSerializer,
                           SigninSerializer, SignupInitialSerializer,
                           SignupVerifySerializer, UserSerializer)
 from .tasks import send_sms_task
+
+
+class UserViewSet(viewsets.ModelViewSet):
+    queryset = CustomUser.objects.all()
+    serializer_class = UserSerializer
+
+    def get_permissions(self):
+        if self.action in ["list", "create"]:
+            permission_classes = [IsAdminUser]
+        elif self.action in ["retrieve", "update", "partial_update", "destroy", "me"]:
+            permission_classes = [IsAuthenticated, IsSelfOrAdmin]
+        else:
+            permission_classes = [IsAuthenticated]
+        return [p() for p in permission_classes]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff or user.is_superuser:
+            return CustomUser.objects.all()
+        return CustomUser.objects.filter(id=user.id)
+
+    @action(detail=False, methods=["get", "put", "patch", "delete"], url_path="me")
+    def me(self, request):
+        """Endpoint for logged-in user to manage their own profile"""
+        user = request.user
+
+        if request.method == "GET":
+            serializer = self.get_serializer(user)
+            return Response(serializer.data)
+
+        elif request.method in ["PUT", "PATCH"]:
+            serializer = self.get_serializer(user, data=request.data, partial=(request.method == "PATCH"))
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data)
+
+        elif request.method == "DELETE":
+            user.delete()
+            return Response({"detail": "Account deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
+
 
 
 class SignupStep1View(APIView):

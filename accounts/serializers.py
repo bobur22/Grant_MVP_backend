@@ -1,7 +1,6 @@
 import random
 import string
 
-
 from django.contrib.auth import authenticate
 from django.contrib.auth.hashers import make_password
 from django.db import IntegrityError, transaction
@@ -27,10 +26,10 @@ class SignupInitialSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True, min_length=8)
     password_confirm = serializers.CharField(write_only=True)
     birth_date = serializers.DateField()
-    address = serializers.CharField(max_length=2000,)
+    address = serializers.CharField(max_length=2000, )
     working_place = serializers.CharField(max_length=2000, required=False, allow_blank=True)
-    pinfl = serializers.CharField(max_length=14,)
-    passport_number = serializers.CharField(max_length=9,)
+    pinfl = serializers.CharField(max_length=14, )
+    passport_number = serializers.CharField(max_length=9, )
 
     class Meta:
         unique_together = ('pinfl', 'passport_number')
@@ -44,8 +43,6 @@ class SignupInitialSerializer(serializers.Serializer):
     def validate_working_place(self, working_place):
         if len(working_place) > 2000:
             raise serializers.ValidationError("Working place must be less than 2000 characters")
-
-
 
     def validate_email(self, value):
         if CustomUser.objects.filter(email=value).exists():
@@ -206,24 +203,56 @@ class SigninSerializer(TokenObtainPairSerializer):
         return data
 
 
+# class UserSerializer(serializers.ModelSerializer):
+#     """
+#     For returning user data
+#     """
+#
+#     class Meta:
+#         model = CustomUser
+#         fields = (
+#             'id',
+#             'email',
+#             'first_name',
+#             'last_name',
+#             'phone_number',
+#             'birth_date',
+#             'address',
+#             'profile_picture',
+#         )
+#         read_only_fields = ('id', 'email')
+
 class UserSerializer(serializers.ModelSerializer):
-    """
-    For returning user data
-    """
+    password = serializers.CharField(write_only=True, required=False)
 
     class Meta:
         model = CustomUser
-        fields = (
-            'id',
-            'email',
-            'first_name',
-            'last_name',
-            'phone_number',
-            'birth_date',
-            'address',
-            'profile_picture',
-        )
-        read_only_fields = ('id', 'email')
+        fields = [
+            "id", "first_name", "last_name", "other_name", "email",
+            "address", "birth_date", "phone_number", "profile_picture",
+            "gender", "working_place", "passport_number", "pinfl",
+            "created_at", "updated_at", "password"
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def create(self, validated_data):
+        password = validated_data.pop("password", None)
+        user = CustomUser(**validated_data)
+        if password:
+            user.set_password(password)
+        else:
+            user.set_unusable_password()
+        user.save()
+        return user
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop("password", None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if password:
+            instance.set_password(password)
+        instance.save()
+        return instance
 
 
 class SendResetCodeSerializer(serializers.Serializer):
