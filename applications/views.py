@@ -43,7 +43,6 @@ class RewardViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def get_queryset(self):
-        """Get queryset with annotations"""
         queryset = Reward.objects.annotate(
             applications_count=Count('applications'),
             pending_applications=Count(
@@ -55,7 +54,6 @@ class RewardViewSet(viewsets.ModelViewSet):
                 filter=Q(applications__status='mukofotlangan')
             )
         )
-
         return queryset
 
     def get_serializer_class(self):
@@ -70,16 +68,16 @@ class RewardViewSet(viewsets.ModelViewSet):
             return RewardDetailSerializer
 
     def list(self, request, *args, **kwargs):
-        """List all rewards with search and filter"""
         queryset = self.get_queryset()
-
         page = self.paginate_queryset(queryset)
+
         if page is not None:
             serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response({
+            response = self.get_paginated_response(serializer.data)
+            response.data.update({
                 'success': True,
-                'rewards': serializer.data
             })
+            return response
 
         serializer = self.get_serializer(queryset, many=True)
         return Response({
