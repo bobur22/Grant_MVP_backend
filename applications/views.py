@@ -762,6 +762,8 @@ class MyApplicationsView(generics.ListAPIView):
         ).prefetch_related('certificates_set')
 
 
+
+
 class RewardApplicationsView(generics.ListAPIView):
     """Get all applications for a specific reward (Admin only)"""
     serializer_class = ApplicationListSerializer
@@ -896,16 +898,12 @@ class ApplicationDetailView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
-
     def get(self, request, application_id):
         """Get detailed application information"""
-
         try:
             if request.user.is_staff or request.user.is_superuser:
-                # Admin can see any application
                 application = Application.objects.select_related('user', 'reward').get(id=application_id)
             else:
-                # Regular users can only see their own applications
                 application = Application.objects.select_related('user', 'reward').get(
                     id=application_id,
                     user=request.user
@@ -916,7 +914,7 @@ class ApplicationDetailView(APIView):
                 'message': 'Ariza topilmadi yoki sizga ruxsat berilmagan'
             }, status=status.HTTP_404_NOT_FOUND)
 
-        # Get certificates
+
         certificates = []
         if hasattr(application, 'certificates_set'):
             for cert in application.certificates_set.all():
@@ -933,6 +931,7 @@ class ApplicationDetailView(APIView):
         detail_data = {
             'ariza_raqami': application.id,
             'xizmat_nomi': application.reward.name,
+            'xizmat_rasmi': application.reward.image.url if application.reward.image else None,
             'holati': application.get_status_display(),
             'holati_code': application.status,
             'manba': application.get_source_display() if hasattr(application,
@@ -978,6 +977,7 @@ class ApplicationDetailView(APIView):
             'success': True,
             'data': detail_data
         })
+
 
 
 class ApplicationStatsView(APIView):

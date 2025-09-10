@@ -413,26 +413,45 @@ class ApplicationFinalSerializer(serializers.Serializer):
                 except Exception as e:
                     print(f"Error deleting temp file: {e}")
 
-
 class ApplicationDetailSerializer(serializers.ModelSerializer):
     """Serializer for displaying complete application details"""
     user_full_name = serializers.CharField(source='user.get_full_name', read_only=True)
     user_pinfl = serializers.CharField(source='user.pinfl', read_only=True)
     user_phone = serializers.CharField(source='user.phone_number', read_only=True)
     reward_name = serializers.CharField(source='reward.name', read_only=True)
+    reward_image = serializers.SerializerMethodField()  # Changed to SerializerMethodField
     certificates = serializers.SerializerMethodField()
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     area_display = serializers.CharField(source='get_area_display', read_only=True)
+    recommendation_letter = serializers.SerializerMethodField()  # Added this method
 
     class Meta:
         model = Application
         fields = [
             'id', 'user_full_name', 'user_pinfl', 'user_phone',
-            'reward_name', 'status', 'status_display',
+            'reward_name', 'reward_image', 'status', 'status_display',
             'area', 'area_display', 'district', 'neighborhood',
             'activity', 'activity_description', 'recommendation_letter',
             'certificates', 'source', 'created_at', 'updated_at'
         ]
+
+    def get_recommendation_letter(self, obj):
+        """Get recommendation letter URL instead of binary data"""
+        if obj.recommendation_letter:
+            return {
+                'url': obj.recommendation_letter.url,
+                'filename': obj.recommendation_letter.name.split('/')[-1],
+            }
+        return None
+
+    def get_reward_image(self, obj):
+        """Get reward image URL instead of binary data"""
+        if obj.reward and obj.reward.image:
+            return {
+                'url': obj.reward.image.url,
+                'filename': obj.reward.image.name.split('/')[-1],
+            }
+        return None
 
     def get_certificates(self, obj):
         """Get certificates list"""
@@ -445,8 +464,6 @@ class ApplicationDetailSerializer(serializers.ModelSerializer):
             }
             for cert in obj.certificates_set.all()
         ]
-
-
 class ApplicationSessionSerializer(serializers.Serializer):
     """Serializer for session-based application data storage"""
     step1_data = serializers.JSONField(required=False)
