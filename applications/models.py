@@ -109,5 +109,51 @@ class Application(models.Model):
             )
         ]
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Track the original status to detect changes
+        self._original_status = self.status if self.pk else None
+
+    def save(self, *args, **kwargs):
+        # Check if this is an update and if status changed
+        is_new = self._state.adding
+        is_status_change = False
+        old_status = None
+
+        if not is_new and self.pk:
+            old_status = self._original_status
+            is_status_change = old_status != self.status
+
+        # Save the instance
+        super().save(*args, **kwargs)
+
+        # Handle notifications after save
+        if is_new:
+            # New application created - handled by signals
+            pass
+        elif is_status_change and old_status:
+            # Status changed - handle notification
+            self._handle_status_change_notification(old_status)
+
+        # Update the tracked status
+        self._original_status = self.status
+
+    def _handle_status_change_notification(self, old_status):
+        """Handle status change notifications"""
+        from notifications.services import NotificationService
+
+        new_status = self.status
+        in_process_statuses = ['mahalla', 'tuman', 'hudud',]
+
+        if new_status in in_process_statuses:
+            NotificationService.create_application_in_process_notification(self, old_status)
+        elif new_status == "oxirgi_tasdiqlash":
+            NotificationService.create_application_last_process_notification(self)
+        elif new_status == 'mukofotlangan':
+            NotificationService.create_application_won_notification(self)
+        elif new_status == 'rad_etilgan':
+            NotificationService.create_application_rejected_notification(self)
+
+
     def __str__(self):
         return f"{self.user.get_full_name}'s application"
