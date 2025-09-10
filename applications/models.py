@@ -93,7 +93,7 @@ class Application(models.Model):
     activity = models.CharField(max_length=200, )
     activity_description = models.TextField()
     recommendation_letter = models.FileField(upload_to='recommendation/', null=True, blank=True)
-    source = models.CharField(max_length=200)
+    source = models.CharField(max_length=200, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

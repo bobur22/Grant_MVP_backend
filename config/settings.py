@@ -35,7 +35,8 @@ INSTALLED_APPS = [
 
     #apps
     'accounts',
-    'applications'
+    'applications',
+    'notifications'
 
 ]
 
