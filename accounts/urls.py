@@ -3,14 +3,14 @@ from rest_framework_simplejwt.views import TokenRefreshView
 
 from .views import (ResendSMSView, ResetPasswordView,
                     SendPasswordResetCodeView, SigninView, SignupStep1View,
-                    SignupStep2View, UserViewSet)
+                    SignupStep2View, UserViewSet, UserSignupView)
 from rest_framework.routers import DefaultRouter
 
 
 router = DefaultRouter()
 router.register("users", UserViewSet, basename="user")
 urlpatterns = [
-
+    path('auth/signup/', UserSignupView.as_view(), name='user-signup'),
     path('signup/step1/', SignupStep1View.as_view(), name='signup_step1'),
     path('signup/step2/', SignupStep2View.as_view(), name='signup_step2'),
     path('signup/resend-sms/', ResendSMSView.as_view(), name='resend_sms'),

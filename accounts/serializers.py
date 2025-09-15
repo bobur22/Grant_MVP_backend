@@ -5,12 +5,14 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.hashers import make_password
 from django.db import IntegrityError, transaction
 from rest_framework import serializers
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 from rest_framework_simplejwt.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 import datetime
 from .models import CustomUser, PasswordResetCode, PhoneVerification
 from .tasks import send_reset_code, send_sms_task
-
+import re
 
 class SignupInitialSerializer(serializers.Serializer):
     """
@@ -202,26 +204,6 @@ class SigninSerializer(TokenObtainPairSerializer):
 
         return data
 
-
-# class UserSerializer(serializers.ModelSerializer):
-#     """
-#     For returning user data
-#     """
-#
-#     class Meta:
-#         model = CustomUser
-#         fields = (
-#             'id',
-#             'email',
-#             'first_name',
-#             'last_name',
-#             'phone_number',
-#             'birth_date',
-#             'address',
-#             'profile_picture',
-#         )
-#         read_only_fields = ('id', 'email')
-
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False)
 
@@ -300,3 +282,132 @@ class ResetPasswordSerializer(serializers.Serializer):
         user.save()
         reset_code.delete()
         return user
+
+
+class UserSignupSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(
+        write_only=True,
+        min_length=8,
+        style={'input_type': 'password'}
+    )
+    confirm_password = serializers.CharField(
+        write_only=True,
+        style={'input_type': 'password'}
+    )
+
+    class Meta:
+        model = CustomUser
+        fields = [
+            'first_name', 'last_name', 'other_name', 'email',
+            'address', 'birth_date', 'phone_number', 'gender',
+            'working_place', 'passport_number', 'pinfl',
+            'password', 'confirm_password'
+        ]
+        extra_kwargs = {
+            'first_name': {'required': True},
+            'last_name': {'required': True},
+            'email': {'required': True},
+            'phone_number': {'required': True},
+            'gender': {'required': True},
+            'passport_number': {'required': True},
+            'pinfl': {'required': True},
+        }
+
+    def validate_phone_number(self, value):
+        """Validate phone number format"""
+        # Remove any spaces or special characters
+        cleaned_phone = re.sub(r'[^\d+]', '', value)
+
+        # Basic validation for phone number format
+        if not re.match(r'^\+?[\d]{7,15}$', cleaned_phone):
+            raise serializers.ValidationError(
+                "Phone number must be between 7-15 digits and can include country code with +"
+            )
+        return value
+
+    def validate_passport_number(self, value):
+        """Validate passport number format (9 characters for Uzbekistan)"""
+        if not re.match(r'^[A-Z]{2}\d{7}$', value.upper()):
+            raise serializers.ValidationError(
+                "Passport number must be in format: 2 letters followed by 7 digits (e.g., AA1234567)"
+            )
+        return value.upper()
+
+    def validate_pinfl(self, value):
+        """Validate PINFL (14 digits for Uzbekistan)"""
+        if not re.match(r'^\d{14}$', value):
+            raise serializers.ValidationError(
+                "PINFL must be exactly 14 digits"
+            )
+        return value
+
+    def validate_email(self, value):
+        """Check if email already exists"""
+        if CustomUser.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError("User with this email already exists.")
+        return value.lower()
+
+    def validate_password(self, value):
+        """Validate password using Django's built-in validators"""
+        try:
+            validate_password(value)
+        except ValidationError as e:
+            raise serializers.ValidationError(e.messages)
+        return value
+
+    def validate(self, attrs):
+        """Validate password confirmation and unique constraints"""
+        password = attrs.get('password')
+        confirm_password = attrs.get('confirm_password')
+
+        if password != confirm_password:
+            raise serializers.ValidationError({
+                'confirm_password': 'Password confirmation does not match.'
+            })
+
+        # Check unique constraints
+        phone_number = attrs.get('phone_number')
+        if CustomUser.objects.filter(phone_number=phone_number).exists():
+            raise serializers.ValidationError({
+                'phone_number': 'User with this phone number already exists.'
+            })
+
+        passport_number = attrs.get('passport_number')
+        if CustomUser.objects.filter(passport_number=passport_number).exists():
+            raise serializers.ValidationError({
+                'passport_number': 'User with this passport number already exists.'
+            })
+
+        pinfl = attrs.get('pinfl')
+        if CustomUser.objects.filter(pinfl=pinfl).exists():
+            raise serializers.ValidationError({
+                'pinfl': 'User with this PINFL already exists.'
+            })
+
+        return attrs
+
+    def create(self, validated_data):
+        """Create new user with encrypted password"""
+        # Remove confirm_password from validated_data
+        validated_data.pop('confirm_password', None)
+
+        # Extract password
+        password = validated_data.pop('password')
+
+        # Create user
+        user = CustomUser.objects.create_user(
+            password=password,
+            **validated_data
+        )
+
+        return user
+
+    def to_representation(self, instance):
+        """Customize response data"""
+        data = super().to_representation(instance)
+        # Add token to response
+        data['tokens'] = instance.token()
+        # Remove sensitive fields from response
+        data.pop('password', None)
+        data.pop('confirm_password', None)
+        return data

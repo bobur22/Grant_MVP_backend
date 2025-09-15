@@ -3,9 +3,11 @@ import string
 from datetime import timedelta
 
 from django.core.cache import cache
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.utils import timezone
-from rest_framework import permissions, serializers, status, viewsets
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
+from rest_framework import permissions, serializers, status, viewsets, generics
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
@@ -16,7 +18,7 @@ from .models import PhoneVerification, CustomUser
 from .permissions import IsSelfOrAdmin
 from .serializers import (ResetPasswordSerializer, SendResetCodeSerializer,
                           SigninSerializer, SignupInitialSerializer,
-                          SignupVerifySerializer, UserSerializer)
+                          SignupVerifySerializer, UserSerializer, UserSignupSerializer)
 from .tasks import send_sms_task
 
 
@@ -252,3 +254,57 @@ class ResetPasswordView(APIView):
             serializer.save()
             return Response({"message": "Password has been successfully changed"}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class UserSignupView(generics.CreateAPIView):
+    """
+    User registration endpoint
+    """
+    queryset = CustomUser.objects.all()
+    serializer_class = UserSignupSerializer
+    permission_classes = [AllowAny]
+
+    @swagger_auto_schema(
+        operation_summary="Register new user",
+        operation_description="Create a new user account with the provided information",
+        responses={
+            201: openapi.Response(
+                description="User created successfully",
+                schema=UserSignupSerializer
+            ),
+            400: openapi.Response(
+                description="Bad Request - Validation errors",
+                examples={
+                    "application/json": {
+                        "message": "Registration failed",
+                        "errors": {
+                            "email": ["User with this email already exists."],
+                            "phone_number": ["User with this phone number already exists."]
+                        }
+                    }
+                }
+            )
+        }
+    )
+    @transaction.atomic
+    def post(self, request, *args, **kwargs):
+        """Create new user account"""
+        serializer = self.get_serializer(data=request.data)
+
+        if serializer.is_valid():
+            user = serializer.save()
+            return Response(
+                {
+                    'message': 'User created successfully',
+                    'user': serializer.data
+                },
+                status=status.HTTP_201_CREATED
+            )
+
+        return Response(
+            {
+                'message': 'Registration failed',
+                'errors': serializer.errors
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
