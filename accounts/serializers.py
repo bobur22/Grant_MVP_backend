@@ -1,6 +1,7 @@
 import random
 import string
 
+from PIL import Image
 from django.contrib.auth import authenticate
 from django.contrib.auth.hashers import make_password
 from django.db import IntegrityError, transaction
@@ -300,7 +301,7 @@ class UserSignupSerializer(serializers.ModelSerializer):
         fields = [
             'first_name', 'last_name', 'other_name', 'email',
             'address', 'birth_date', 'phone_number', 'gender',
-            'working_place', 'passport_number', 'pinfl',
+            'working_place', 'passport_number', 'pinfl','profile_picture',
             'password', 'confirm_password'
         ]
         extra_kwargs = {
@@ -311,6 +312,7 @@ class UserSignupSerializer(serializers.ModelSerializer):
             'gender': {'required': True},
             'passport_number': {'required': True},
             'pinfl': {'required': True},
+            'profile_picture': {'required': False},
         }
 
     def validate_phone_number(self, value):
@@ -332,6 +334,22 @@ class UserSignupSerializer(serializers.ModelSerializer):
                 "Passport number must be in format: 2 letters followed by 7 digits (e.g., AA1234567)"
             )
         return value.upper()
+
+    def validate_profile_picture(self, value):
+        try:
+            img = Image.open(value)
+            img.verify()
+        except Exception:
+            raise serializers.ValidationError("Uploaded file is not a valid image.")
+
+        max_size = 10 * 1024 * 1024
+        if value.size > max_size:
+            raise serializers.ValidationError("Image size should not exceed 2MB.")
+
+        if img.width > 5000 or img.height > 5000:
+            raise serializers.ValidationError("Image resolution too large.")
+
+        return value
 
     def validate_pinfl(self, value):
         """Validate PINFL (14 digits for Uzbekistan)"""
