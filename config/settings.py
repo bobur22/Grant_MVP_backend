@@ -193,7 +193,7 @@ AWS_REGION = "us-east-1"
 
 CORS_ALLOW_ALL_ORIGINS = True
 
-CSRF_TRUSTED_ORIGINS = ['http://localhost:8000', 'https://grand-production.up.railway.app',]
+CSRF_TRUSTED_ORIGINS = ['http://localhost:8000', 'https://grand-production.up.railway.app','https://grant.test-app.uz']
 
 
 ESKIZ_EMAIL = "email@example.com"
