@@ -20,6 +20,7 @@ CORS_ALLOW_CREDENTIALS = True
 # Application definition
 
 INSTALLED_APPS = [
+    'jazzmin',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -193,8 +194,33 @@ AWS_REGION = "us-east-1"
 
 CORS_ALLOW_ALL_ORIGINS = True
 
-CSRF_TRUSTED_ORIGINS = ['http://localhost:8000', 'https://grand-production.up.railway.app','https://grant.test-app.uz']
+CSRF_TRUSTED_ORIGINS = ['http://localhost:8000', 'https://grand-production.up.railway.app','https://grant.test-app.uz','https://grant-mvp-mnqd.vercel.app']
 
 
 ESKIZ_EMAIL = "email@example.com"
 ESKIZ_PASSWORD = "password" # I changed
+
+JAZZMIN_SETTINGS = {
+    "site_title": "Grand MVP Admin",          # Brauzer title
+    "site_header": "Platforma boshqaruv paneli", # Yuqori sarlavha
+    "site_brand": "AdminPanel",                 # Chap yuqori logo yozuvi
+    "welcome_sign": "Xush kelibsiz, administrator!",
+
+    "copyright": "© 2025 M Company",
+    "site_logo": None,  # static faylga logo qo‘shib, yo‘lini berish mumkin
+    "show_ui_builder": True,  # UI sozlagichni yoqish (admin ichida)
+    "related_modal_active": True,
+}
+JAZZMIN_UI_TWEAKS = {
+    "theme": "superhero",  # tayyor Bootstrap temasi
+    "dark_mode_theme": "darkly",
+    "navbar": "navbar-dark bg-info",
+    "sidebar": "sidebar-dark-info",
+    "brand_colour": "navbar-info",
+    "accent": "accent-info",
+    "button_classes": {
+        "primary": "btn-primary",
+        "secondary": "btn-secondary",
+        "success": "btn-success",
+    }
+}
